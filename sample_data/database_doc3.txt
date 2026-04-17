@@ -1,0 +1,8 @@
+Graph algorithms are essential for route planning, network design, and recommendation systems.
+A graph is made of vertices and edges, where edges capture relationships between entities.
+Breadth first search is commonly used to explore unweighted graphs level by level.
+Depth first search is useful for cycle detection, topological sorting, and connected components.
+For weighted graphs, Dijkstra's algorithm computes shortest paths when all edge weights are non negative.
+Minimum spanning tree algorithms like Prim and Kruskal reduce total connection cost while preserving reachability.
+Graph representations often use adjacency lists because they are memory efficient for sparse graphs.
+Understanding graph complexity helps engineers choose algorithms that scale with large datasets.
