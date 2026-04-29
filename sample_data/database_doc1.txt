@@ -1,0 +1,11 @@
+Machine learning is a subset of artificial intelligence that focuses on building systems
+that learn from data. Instead of being explicitly programmed to perform a task, these
+systems use algorithms to parse data, learn from it, and then make predictions or
+decisions. The field has grown tremendously in recent years, driven by increases in
+computational power and the availability of large datasets. Deep learning, a further
+subset of machine learning, uses neural networks with many layers to model complex
+patterns in data. Applications range from image recognition and natural language
+processing to autonomous vehicles and medical diagnosis. The key advantage of machine
+learning is its ability to improve performance over time as more data becomes available.
+Supervised learning, unsupervised learning, and reinforcement learning represent the
+three main paradigms in the field today.

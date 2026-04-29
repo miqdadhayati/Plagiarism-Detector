@@ -1,0 +1,5 @@
+# Hashes of file build rules.
+2a77423328670a8c3f9417113a7fc5ad CMakeFiles/PlagiarismApp_autogen
+2a77423328670a8c3f9417113a7fc5ad CMakeFiles/UnitTests_autogen
+ef7bf88b5beda395bcfefddb34e64368 PlagiarismApp_autogen/timestamp
+e37a9a9eaece6457313bc7514f366da0 UnitTests_autogen/timestamp

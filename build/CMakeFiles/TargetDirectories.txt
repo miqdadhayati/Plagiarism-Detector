@@ -1,0 +1,8 @@
+C:/Users/miqda/OneDrive/Desktop/DS2/Project/plagiarism_detector/build/CMakeFiles/PlagiarismApp.dir
+C:/Users/miqda/OneDrive/Desktop/DS2/Project/plagiarism_detector/build/CMakeFiles/UnitTests.dir
+C:/Users/miqda/OneDrive/Desktop/DS2/Project/plagiarism_detector/build/CMakeFiles/edit_cache.dir
+C:/Users/miqda/OneDrive/Desktop/DS2/Project/plagiarism_detector/build/CMakeFiles/rebuild_cache.dir
+C:/Users/miqda/OneDrive/Desktop/DS2/Project/plagiarism_detector/build/CMakeFiles/PlagiarismApp_autogen_timestamp_deps.dir
+C:/Users/miqda/OneDrive/Desktop/DS2/Project/plagiarism_detector/build/CMakeFiles/PlagiarismApp_autogen.dir
+C:/Users/miqda/OneDrive/Desktop/DS2/Project/plagiarism_detector/build/CMakeFiles/UnitTests_autogen_timestamp_deps.dir
+C:/Users/miqda/OneDrive/Desktop/DS2/Project/plagiarism_detector/build/CMakeFiles/UnitTests_autogen.dir
