@@ -6,6 +6,7 @@
 #include "rawbuffer.h"
 #include <string>
 #include <functional>
+#include <unordered_map>
 
 // Indexed file metadata.
 struct FileRecord {
@@ -42,6 +43,13 @@ private:
     mutable std::function<void(const std::string&)> traceCallback_;
     mutable bool            traceDataStructure_;
 
+    // Thesaurus Catcher: synonym -> root-token table.
+    // Lookup is O(1) average via std::unordered_map; total space is O(V),
+    // where V is the loaded vocabulary. Keys are stored lower-cased so that
+    // applySynonyms() can hash incoming tokens directly without copying the
+    // dictionary at query time.
+    std::unordered_map<std::string, std::string> synonymMap_;
+
     void emitTrace(const std::string& message) const;
 
     // Normalize text.
@@ -58,8 +66,18 @@ private:
         const std::string& text,
         const RawBuffer<std::string>& terms) const;
 
-    // Split text into words.
-    static RawBuffer<std::string> tokenize(const std::string& text);
+    // Split text into words. Each token is normalized through applySynonyms()
+    // before it is appended, so semantically-equivalent surface forms collapse
+    // to a shared root token before n-gram construction. This is a non-static
+    // const member because it must read synonymMap_.
+    RawBuffer<std::string> tokenize(const std::string& text) const;
+
+    // Synonym normalization function T : W -> R.
+    // Returns the root token associated with `word` if w in W; otherwise
+    // returns `word` unchanged (the identity branch of T). Lookup is O(1)
+    // average. The input is lower-cased internally before hashing so the
+    // function is case-insensitive at the boundary.
+    std::string applySynonyms(const std::string& word) const;
 
     // Build n-grams with position mapping.
     RawBuffer<NGram> createNgrams(const std::string& originalText,
@@ -91,6 +109,16 @@ public:
     void removeBoilerplatePhrase(int index);
     void clearBoilerplate();
     const RawBuffer<std::string>& boilerplate() const { return boilerplate_; }
+
+    // Load a synonym dictionary from disk. Each line of the file is a CSV
+    // record formatted as:
+    //     root_token,synonym1,synonym2,synonym3,...
+    // Blank lines and lines beginning with '#' are ignored. Synonym keys are
+    // folded to lower case before insertion. The first column is preserved
+    // verbatim as the value, so callers may use canonical sentinels such as
+    // "SPEED_ADJ" without case mangling. Returns true if the file was opened
+    // and parsed successfully; false on I/O failure.
+    bool loadSynonymDictionary(const std::string& filePath);
 
     // Add and index a file.
     bool addFile(const std::string& filePath);

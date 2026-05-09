@@ -91,13 +91,23 @@ std::string PlagiarismEngine::removeTermsStrict(
 }
 
 // Function: tokenize
-RawBuffer<std::string> PlagiarismEngine::tokenize(const std::string& text) {
+// The Thesaurus Catcher interception point. Each whitespace-delimited token
+// is passed through applySynonyms() the moment it is extracted, so the n-gram
+// buffer downstream sees only root tokens. By collapsing synonyms before the
+// VP-Tree ever computes a Levenshtein distance, we guarantee
+//     D_lev(T(A), T(B)) <= D_lev(A, B)
+// for any pair of n-grams A, B that are semantically identical under T.
+RawBuffer<std::string> PlagiarismEngine::tokenize(const std::string& text) const {
     RawBuffer<std::string> words;
     std::string word;
     for (size_t i = 0; i <= text.size(); ++i) {
         if (i == text.size() || text[i] == ' ') {
             if (!word.empty()) {
-                words.append(std::move(word));
+                // Synonym normalization happens here, exactly once per token,
+                // so neither createNgrams() nor scan() needs to know about
+                // the dictionary. Unknown words fall through unchanged.
+                std::string token = applySynonyms(word);
+                words.append(std::move(token));
                 word.clear();
             }
         } else {
@@ -105,6 +115,120 @@ RawBuffer<std::string> PlagiarismEngine::tokenize(const std::string& text) {
         }
     }
     return words;
+}
+
+// Function: applySynonyms
+// Implements T : W -> R. Hash lookup is O(1) on average, O(V) space, where V
+// is the size of the loaded vocabulary. The function never mutates the
+// caller's string and is safe to call from const contexts.
+std::string PlagiarismEngine::applySynonyms(const std::string& word) const {
+    // Fast path: no dictionary loaded, identity mapping.
+    if (synonymMap_.empty()) return word;
+
+    // Edge case 1 (case sensitivity): the dictionary stores lower-cased keys
+    // at load time, so the lookup token must also be lower-cased before it
+    // is hashed. We build the key into a local string rather than mutating
+    // the input so that the original surface form survives a miss.
+    std::string key;
+    key.reserve(word.size());
+    for (char c : word) {
+        key += static_cast<char>(
+            std::tolower(static_cast<unsigned char>(c)));
+    }
+
+    // Edge case 2 (missing keys): a miss yields end(); we return the original
+    // word so the n-gram buffer sees it unchanged. This is the identity
+    // branch of T:  w not in W  =>  T(w) = w.
+    auto it = synonymMap_.find(key);
+    if (it == synonymMap_.end()) {
+        return word;
+    }
+    return it->second;
+}
+
+// Function: loadSynonymDictionary
+// Parses a CSV-style thesaurus file. Each non-comment, non-blank line is
+//     root_token,synonym1,synonym2,...
+// and produces N entries in the hash map (one per synonym) all pointing to
+// the root token string. Duplicate synonyms across lines follow last-write-
+// wins semantics, which lets a caller override a mapping by re-declaring it
+// later in the file.
+bool PlagiarismEngine::loadSynonymDictionary(const std::string& filePath) {
+    std::ifstream ifs(filePath);
+    if (!ifs.is_open()) {
+        emitTrace("synonym-dict load failed reason=cannot-open path=\""
+                  + filePath + "\"");
+        return false;
+    }
+
+    int linesParsed   = 0;
+    int entriesAdded  = 0;
+    std::string line;
+
+    while (std::getline(ifs, line)) {
+        // Strip trailing CR for Windows-authored files (CRLF line endings).
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+
+        // Skip leading whitespace; classify the line.
+        size_t lstart = 0;
+        while (lstart < line.size() &&
+               std::isspace(static_cast<unsigned char>(line[lstart])))
+            ++lstart;
+        if (lstart >= line.size()) continue;   // blank line
+        if (line[lstart] == '#')   continue;   // comment
+
+        // Split the line on commas. Each field is trimmed of surrounding
+        // whitespace so dictionaries can be authored with human-friendly
+        // spacing like "SPEED_ADJ, quick, fast, rapid".
+        RawBuffer<std::string> fields;
+        std::string field;
+        for (size_t i = lstart; i <= line.size(); ++i) {
+            if (i == line.size() || line[i] == ',') {
+                size_t fs = 0, fe = field.size();
+                while (fs < fe &&
+                       std::isspace(static_cast<unsigned char>(field[fs])))
+                    ++fs;
+                while (fe > fs &&
+                       std::isspace(static_cast<unsigned char>(field[fe - 1])))
+                    --fe;
+                fields.append(field.substr(fs, fe - fs));
+                field.clear();
+            } else {
+                field += line[i];
+            }
+        }
+
+        // Need at least one root + one synonym for the line to be useful.
+        if (fields.count() < 2) continue;
+
+        const std::string& rootToken = fields[0];
+        if (rootToken.empty()) continue;
+
+        // Insert each synonym -> root mapping. Keys are folded to lower
+        // case (edge case 1). The root value is stored verbatim so
+        // callers can use uppercase sentinels such as "SPEED_ADJ" that
+        // are guaranteed not to collide with real lowercased input tokens.
+        for (int j = 1; j < fields.count(); ++j) {
+            const std::string& syn = fields[j];
+            if (syn.empty()) continue;
+
+            std::string key;
+            key.reserve(syn.size());
+            for (char c : syn) {
+                key += static_cast<char>(
+                    std::tolower(static_cast<unsigned char>(c)));
+            }
+            synonymMap_[key] = rootToken;   // last-write-wins on duplicates
+            ++entriesAdded;
+        }
+        ++linesParsed;
+    }
+
+    emitTrace("synonym-dict loaded path=\"" + filePath + "\""
+              + " lines=" + std::to_string(linesParsed)
+              + " entries=" + std::to_string(entriesAdded)
+              + " mapSize=" + std::to_string(synonymMap_.size()));
+    return true;
 }
 
 // Function: createNgrams

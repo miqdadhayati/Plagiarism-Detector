@@ -1,0 +1,33 @@
+# Thesaurus Catcher dictionary
+# Urban vs. Rural Essay Domain Testing
+
+# --- Verbs ---
+RESIDE_VB,live,living,residing,dwelling
+
+# --- Adjectives ---
+BUSY_ADJ,busy,bustling,active
+SPEED_ADJ,rapid,fast,quick,swift
+CONSTANT_ADJ,constant,continuous,nonstop
+TIRE_ADJ,exhausting,tiring,draining
+ABUNDANT_ADJ,abundant,plentiful,many
+DIVERSE_ADJ,diverse,varied,different
+CULTURE_ADJ,cultural,artistic
+ATTRACT_ADJ,attractive,appealing,desirable
+RURAL_ADJ,rural,country,countryside
+PEACE_ADJ,peaceful,tranquil,calm
+FRESH_ADJ,fresh,clean
+STRONG_ADJ,strong,powerful
+ADVANCED_ADJ,advanced,modern,developed
+
+# --- Nouns ---
+CITY_NOUN,city,town,metropolitan,urban,regions
+CHALLENGE_NOUN,challenges,difficulties,problems
+PACE_NOUN,pace,speed,rate
+NOISE_NOUN,noise,sound,clamor
+RESIDENT_NOUN,residents,inhabitants,citizens
+CAREER_NOUN,career,job,profession
+OPPORTUNITY_NOUN,opportunities,prospects,chances
+ENVIRONMENT_NOUN,atmosphere,environment,settings
+AIR_NOUN,air,oxygen
+FEELING_NOUN,sense,feeling
+INFRASTRUCTURE_NOUN,infrastructure,facilities,systems

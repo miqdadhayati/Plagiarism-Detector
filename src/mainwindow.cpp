@@ -109,6 +109,16 @@ MainWindow::MainWindow(QWidget* parent)
     opsPlaybackTimer_ = new QTimer(this);
     opsPlaybackTimer_->setInterval(700);
     setupConnections();
+
+    // Thesaurus Catcher: load synonym dictionary once at startup.
+    // findSampleFilePath() searches both the working directory and the
+    // application directory, so this resolves correctly regardless of
+    // how the .exe is launched.
+    QString synPath = findSampleFilePath("synonyms.csv");
+    if (!synPath.isEmpty()) {
+        engine_.loadSynonymDictionary(synPath.toStdString());
+    }
+
     updateTreeStats();
     setWindowTitle("VP-Tree Plagiarism Detector");
     resize(1280, 800);
