@@ -1,0 +1,8 @@
+Software testing improves reliability by detecting defects before release.
+Unit tests verify small components in isolation and provide fast feedback for developers.
+Integration tests validate interactions between modules, services, and external dependencies.
+System tests evaluate complete workflows from input to output under realistic conditions.
+Regression testing ensures that new changes do not break previously working functionality.
+A strong test strategy combines automated checks, clear test data, and repeatable execution.
+Continuous integration pipelines run tests on every commit to prevent unstable builds.
+Good test reports should show failures quickly, with enough detail to reproduce and fix issues.

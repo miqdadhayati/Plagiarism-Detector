@@ -1,0 +1,8 @@
+Distributed systems allow applications to run across multiple machines while appearing as a single service.
+Replication improves availability by keeping copies of data on separate nodes.
+Partitioning divides data into shards so read and write load can scale horizontally.
+Consensus protocols coordinate nodes so they agree on critical state changes.
+Latency, fault tolerance, and consistency are key trade offs in distributed design.
+Monitoring and observability help teams diagnose failures in complex production systems.
+Engineers often use message queues to decouple services and smooth traffic spikes.
+Secure communication between nodes is required to protect data in transit.
