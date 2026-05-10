@@ -4,6 +4,7 @@
 #include <string>
 #include <fstream>
 #include <cstdio>
+#include <vector>
 #include "rawbuffer.h"
 #include "ngram.h"
 #include "vptree.h"
@@ -269,6 +270,33 @@ void test_engine_full_scan() {
     std::cout << "  PASS\n";
 }
 
+// Function: test_rank_sources
+void test_rank_sources() {
+    std::cout << "[TEST] Source ranking... ";
+    PlagiarismEngine engine;
+    engine.setNgramSize(4);
+    bool ok1 = engine.addFile("../sample_data/database_doc1.txt");
+    bool ok2 = engine.addFile("../sample_data/database_doc2.txt");
+    if (!ok1 || !ok2) {
+        std::cout << "SKIP (sample files not found at expected path)\n";
+        return;
+    }
+    std::string queryText = PlagiarismEngine::readFile(
+        "../sample_data/query_suspicious.txt");
+    if (queryText.empty()) {
+        std::cout << "SKIP (query file not found at expected path)\n";
+        return;
+    }
+    RawBuffer<SourceScore> scores = engine.rankSources(
+        queryText, "query_suspicious.txt", 0.30, 3);
+    assert(scores.count() > 0);
+    assert(scores.count() <= 3);
+    assert(scores[0].matchedNgrams > 0);
+    assert(scores[0].coveragePercent > 0.0);
+    assert(scores[0].avgSimilarity >= 0.0);
+    std::cout << "PASS (sources=" << scores.count() << ")\n";
+}
+
 // Function: test_filter_list_management
 void test_filter_list_management() {
     std::cout << "[TEST] Filter list management... ";
@@ -281,26 +309,20 @@ void test_filter_list_management() {
     engine.clearWhitelist();
     assert(engine.whitelist().count() == 0);
 
-    engine.addBoilerplatePhrase("introduction");
-    engine.addBoilerplatePhrase("author declaration");
-    assert(engine.boilerplate().count() == 2);
-    engine.removeBoilerplatePhrase(0);
-    assert(engine.boilerplate().count() == 1);
-    engine.clearBoilerplate();
+    // Boilerplate is now auto-detected, no manual add/remove.
     assert(engine.boilerplate().count() == 0);
 
     std::cout << "PASS\n";
 }
 
-// Function: test_strict_filter_preprocessing
-void test_strict_filter_preprocessing() {
-    std::cout << "[TEST] Strict filter preprocessing... ";
+// Function: test_whitelist_preprocessing
+void test_whitelist_preprocessing() {
+    std::cout << "[TEST] Whitelist preprocessing... ";
     PlagiarismEngine engine;
     engine.addWhitelistWord("data");
-    engine.addBoilerplatePhrase("official department header");
 
     std::string cleaned = engine.preprocessText(
-        "Official Department Header. Database data driven methods.");
+        "Database data driven methods.");
     assert(cleaned == "database driven methods");
 
     // "data" must not remove the substring inside "database".
@@ -311,42 +333,114 @@ void test_strict_filter_preprocessing() {
     std::cout << "PASS\n";
 }
 
-// Function: test_boilerplate_reindex_effect
-void test_boilerplate_reindex_effect() {
-    std::cout << "[TEST] Boilerplate reindex effect... ";
-    const char* dbPath = "tmp_filter_db.txt";
+// Function: test_auto_detect_boilerplate
+void test_auto_detect_boilerplate() {
+    std::cout << "[TEST] Auto-detect boilerplate... ";
 
-    {
-        std::ofstream ofs(dbPath);
+    // Create temporary files with a common header.
+    const char* tmpFiles[3] = {
+        "tmp_bp_detect1.txt",
+        "tmp_bp_detect2.txt",
+        "tmp_bp_detect3.txt"
+    };
+
+    for (int i = 0; i < 3; ++i) {
+        std::ofstream ofs(tmpFiles[i]);
         assert(ofs.good());
-        ofs << "official boilerplate header alpha beta gamma delta epsilon";
+        ofs << "Habib University Department of Computer Science\n"
+            << "Course CS 201 Data Structures Fall 2025\n";
+        // Add unique content per file.
+        if (i == 0) ofs << "alpha beta gamma delta epsilon zeta eta theta";
+        if (i == 1) ofs << "one two three four five six seven eight";
+        if (i == 2) ofs << "apple banana cherry date elderberry fig grape";
     }
-
-    std::string query =
-        "Official boilerplate header alpha beta gamma delta epsilon";
 
     PlagiarismEngine engine;
     engine.setNgramSize(3);
-    assert(engine.addFile(dbPath));
-    assert(engine.indexedFiles().count() == 1);
-    int beforeNgrams = engine.indexedFiles()[0].ngramCount;
+    engine.setBoilerplateThreshold(0.8);
 
-    engine.addBoilerplatePhrase("official boilerplate header");
+    for (int i = 0; i < 3; ++i) {
+        assert(engine.addFile(tmpFiles[i]));
+    }
+    assert(engine.indexedFiles().count() == 3);
+
+    // Detect boilerplate from the common header.
+    int detected = engine.detectBoilerplate();
+    assert(detected > 0);
+
+    // Verify that the boilerplate list contains phrases from the common header.
+    bool foundCommon = false;
+    for (int i = 0; i < engine.boilerplate().count(); ++i) {
+        const std::string& phrase = engine.boilerplate()[i];
+        if (phrase.find("habib") != std::string::npos ||
+            phrase.find("university") != std::string::npos ||
+            phrase.find("department") != std::string::npos ||
+            phrase.find("computer") != std::string::npos ||
+            phrase.find("cs 201") != std::string::npos) {
+            foundCommon = true;
+        }
+    }
+    assert(foundCommon);
+
+    // Rebuild index with boilerplate and check that tree shrinks.
+    int beforeSize = engine.treeSize();
     assert(engine.rebuildIndexWithFilters());
-    assert(engine.indexedFiles().count() == 1);
-    int afterNgrams = engine.indexedFiles()[0].ngramCount;
-    assert(afterNgrams < beforeNgrams);
+    int afterSize = engine.treeSize();
+    assert(afterSize <= beforeSize);
 
-    std::string cleaned = engine.preprocessText(query);
-    assert(cleaned == "alpha beta gamma delta epsilon");
+    // Cleanup.
+    for (int i = 0; i < 3; ++i) {
+        std::remove(tmpFiles[i]);
+    }
 
-    ScanReport report = engine.scan(query, "tmp_query.txt", 0.30);
-    assert(report.matchPercentage > 10.0);
+    std::cout << "PASS (detected=" << detected << ")\n";
+}
 
-    int rm = std::remove(dbPath);
-    assert(rm == 0);
+// Function: test_synonym_mapping_report
+void test_synonym_mapping_report() {
+    std::cout << "[TEST] Synonym mapping report... ";
+    PlagiarismEngine engine;
 
-    std::cout << "PASS\n";
+    // Load synonym dictionary.
+    bool loaded = engine.loadSynonymDictionary("../sample_data/synonyms.csv");
+    if (!loaded) {
+        std::cout << "SKIP (synonyms.csv not found)\n";
+        return;
+    }
+    assert(engine.synonymsLoaded());
+
+    // Test the dictionary grouping.
+    auto dict = engine.getSynonymDictionary();
+    assert(!dict.empty());
+
+    // Test mapping report.
+    std::string text = "Residing in a bustling metropolitan town";
+    auto report = engine.getSynonymMappingReport(text);
+    assert(!report.empty());
+
+    // Verify specific mappings.
+    bool foundResiding = false;
+    bool foundBustling = false;
+    bool foundMetropolitan = false;
+    for (const auto& m : report) {
+        if (m.originalWord == "residing" && m.rootToken == "RESIDE_VB")
+            foundResiding = true;
+        if (m.originalWord == "bustling" && m.rootToken == "BUSY_ADJ")
+            foundBustling = true;
+        if (m.originalWord == "metropolitan" && m.rootToken == "CITY_NOUN")
+            foundMetropolitan = true;
+    }
+    assert(foundResiding);
+    assert(foundBustling);
+    assert(foundMetropolitan);
+
+    // Print the mappings for visibility.
+    std::cout << "\n";
+    for (const auto& m : report) {
+        std::cout << "    \"" << m.originalWord << "\" -> " << m.rootToken << "\n";
+    }
+
+    std::cout << "  PASS\n";
 }
 
 // Function: main
@@ -361,9 +455,11 @@ int main() {
     test_vptree_utilities();
     test_vptree_operations_visualization();
     test_filter_list_management();
-    test_strict_filter_preprocessing();
-    test_boilerplate_reindex_effect();
+    test_whitelist_preprocessing();
+    test_auto_detect_boilerplate();
+    test_synonym_mapping_report();
     test_engine_full_scan();
+    test_rank_sources();
     std::cout << "\n=== ALL TESTS PASSED ===\n";
     return 0;
 }

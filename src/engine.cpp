@@ -4,6 +4,8 @@
 #include <cctype>
 #include <algorithm>
 #include <cstring>
+#include <set>
+#include <map>
 
 // Function: emitTrace
 void PlagiarismEngine::emitTrace(const std::string& message) const {
@@ -314,9 +316,9 @@ std::string PlagiarismEngine::preprocessText(const std::string& raw) const {
     return applyWhitelist(noBoilerplate);
 }
 
-// Function: PlagiarismEngine
 PlagiarismEngine::PlagiarismEngine()
-    : ngramSize_(4), traceCallback_(nullptr), traceDataStructure_(false) {}
+    : ngramSize_(4), boilerplateThreshold_(0.8),
+      traceCallback_(nullptr), traceDataStructure_(false) {}
 // Function: setNgramSize
 void PlagiarismEngine::setNgramSize(int n) {
     if (n >= 2 && n <= 10) ngramSize_ = n;
@@ -335,20 +337,155 @@ void PlagiarismEngine::clearWhitelist() {
     whitelist_.clear();
 }
 
-// Function: addBoilerplatePhrase
-void PlagiarismEngine::addBoilerplatePhrase(const std::string& phrase) {
-    if (!phrase.empty())
-        boilerplate_.append(phrase);
+// Function: setBoilerplateThreshold
+void PlagiarismEngine::setBoilerplateThreshold(double t) {
+    if (t >= 0.1 && t <= 1.0) boilerplateThreshold_ = t;
 }
 
-// Function: removeBoilerplatePhrase
-void PlagiarismEngine::removeBoilerplatePhrase(int index) {
-    boilerplate_.removeAt(index);
-}
-
-// Function: clearBoilerplate
-void PlagiarismEngine::clearBoilerplate() {
+// Function: detectBoilerplate
+// Scans all indexed files and auto-detects phrases (n-grams) that appear in
+// >= boilerplateThreshold_ fraction of documents. These common phrases are
+// typically organizational headers, question formats, etc. that should not
+// be flagged as plagiarism.
+int PlagiarismEngine::detectBoilerplate() {
     boilerplate_.clear();
+
+    if (indexedFiles_.count() < 2) {
+        emitTrace("detectBoilerplate skipped reason=less-than-2-files");
+        return 0;
+    }
+
+    // Read and normalize each file's content.
+    RawBuffer<std::string> normalizedContents;
+    for (int i = 0; i < indexedFiles_.count(); ++i) {
+        std::string raw = readFile(indexedFiles_[i].fullPath);
+        std::string norm = normalizeText(raw);
+        normalizedContents.append(norm);
+    }
+
+    int numDocs = normalizedContents.count();
+    int minDocs = static_cast<int>(numDocs * boilerplateThreshold_);
+    if (minDocs < 2) minDocs = 2;
+
+    // Use a small sliding window (3 words) to find common phrases.
+    // Count how many distinct documents contain each phrase.
+    std::map<std::string, int> phraseCounts;
+
+    for (int d = 0; d < numDocs; ++d) {
+        RawBuffer<std::string> words = tokenize(normalizedContents[d]);
+        std::set<std::string> seenInDoc;  // de-duplicate within one doc
+
+        for (int windowSize = 3; windowSize <= 5; ++windowSize) {
+            for (int i = 0; i <= words.count() - windowSize; ++i) {
+                std::string phrase;
+                for (int j = 0; j < windowSize; ++j) {
+                    if (j > 0) phrase += ' ';
+                    phrase += words[i + j];
+                }
+                if (seenInDoc.find(phrase) == seenInDoc.end()) {
+                    seenInDoc.insert(phrase);
+                    phraseCounts[phrase]++;
+                }
+            }
+        }
+    }
+
+    // Collect phrases meeting the threshold.
+    // Also filter out sub-phrases if a longer phrase covers them.
+    std::vector<std::string> candidates;
+    for (auto& kv : phraseCounts) {
+        if (kv.second >= minDocs) {
+            candidates.push_back(kv.first);
+        }
+    }
+
+    // Sort by length descending so longer phrases come first.
+    std::sort(candidates.begin(), candidates.end(),
+              [](const std::string& a, const std::string& b) {
+                  return a.size() > b.size();
+              });
+
+    // Remove sub-phrases that are fully contained in a longer already-added phrase.
+    std::vector<std::string> filtered;
+    for (const auto& cand : candidates) {
+        bool subsumed = false;
+        for (const auto& existing : filtered) {
+            if (existing.find(cand) != std::string::npos) {
+                subsumed = true;
+                break;
+            }
+        }
+        if (!subsumed) {
+            filtered.push_back(cand);
+        }
+    }
+
+    for (const auto& phrase : filtered) {
+        boilerplate_.append(phrase);
+    }
+
+    emitTrace("detectBoilerplate done phrases=" + std::to_string(boilerplate_.count())
+            + " threshold=" + std::to_string(boilerplateThreshold_)
+            + " minDocs=" + std::to_string(minDocs)
+            + " totalDocs=" + std::to_string(numDocs));
+
+    return boilerplate_.count();
+}
+
+// Function: getSynonymDictionary
+// Inverts the synonymMap_ (synonym->root) into a grouped view (root->[synonyms])
+// for display purposes.
+std::vector<SynonymDictEntry> PlagiarismEngine::getSynonymDictionary() const {
+    // Build root -> synonyms grouping.
+    std::map<std::string, std::vector<std::string>> grouped;
+    for (auto& kv : synonymMap_) {
+        grouped[kv.second].push_back(kv.first);
+    }
+    std::vector<SynonymDictEntry> result;
+    for (auto& kv : grouped) {
+        SynonymDictEntry entry;
+        entry.rootToken = kv.first;
+        // Sort synonyms alphabetically for stable display.
+        std::sort(kv.second.begin(), kv.second.end());
+        entry.synonyms = kv.second;
+        result.push_back(entry);
+    }
+    return result;
+}
+
+// Function: getSynonymMappingReport
+// Tokenizes the input text and reports every word that has a synonym mapping,
+// showing original_word -> root_token.
+std::vector<SynonymMapping> PlagiarismEngine::getSynonymMappingReport(
+    const std::string& text) const
+{
+    std::vector<SynonymMapping> report;
+    if (synonymMap_.empty()) return report;
+
+    std::string normalized = normalizeText(text);
+    // Split into words manually (same logic as tokenize but we keep originals).
+    std::string word;
+    for (size_t i = 0; i <= normalized.size(); ++i) {
+        if (i == normalized.size() || normalized[i] == ' ') {
+            if (!word.empty()) {
+                // Check if this word has a synonym mapping.
+                std::string key;
+                key.reserve(word.size());
+                for (char c : word) {
+                    key += static_cast<char>(
+                        std::tolower(static_cast<unsigned char>(c)));
+                }
+                auto it = synonymMap_.find(key);
+                if (it != synonymMap_.end()) {
+                    report.push_back(SynonymMapping(word, it->second));
+                }
+                word.clear();
+            }
+        } else {
+            word += normalized[i];
+        }
+    }
+    return report;
 }
 // Function: addFile
 bool PlagiarismEngine::addFile(const std::string& filePath) {
@@ -565,6 +702,47 @@ ScanReport PlagiarismEngine::scan(const std::string& queryText,
                 report.matchedFiles.append(results[bestIdx].ngram.sourceFile);
         }
     }
+
+    // Un-mark characters in the original query text that belong to
+    // whitelist or boilerplate terms. Without this, the ratio-based
+    // position mapping inflates matched ranges when filter words are
+    // removed (cleaned text is shorter → ratio is larger → mapped
+    // ranges cover more characters → percentage goes UP instead of DOWN).
+    {
+        // Build a lowercase copy of the original for case-insensitive matching.
+        std::string lowerQuery;
+        lowerQuery.reserve(queryText.size());
+        for (size_t ci = 0; ci < queryText.size(); ++ci) {
+            lowerQuery += static_cast<char>(
+                std::tolower(static_cast<unsigned char>(queryText[ci])));
+        }
+
+        // Lambda: find each term in the original text and un-mark those chars.
+        auto unmarkTerms = [&](const RawBuffer<std::string>& terms) {
+            for (int t = 0; t < terms.count(); ++t) {
+                std::string term = normalizeText(terms[t]);
+                if (term.empty()) continue;
+                size_t p = 0;
+                while ((p = lowerQuery.find(term, p)) != std::string::npos) {
+                    // Word boundary checks.
+                    bool leftOk = (p == 0) ||
+                        !std::isalnum(static_cast<unsigned char>(lowerQuery[p - 1]));
+                    size_t ep = p + term.size();
+                    bool rightOk = (ep >= lowerQuery.size()) ||
+                        !std::isalnum(static_cast<unsigned char>(lowerQuery[ep]));
+                    if (leftOk && rightOk) {
+                        for (size_t c = p; c < ep && c < static_cast<size_t>(textLen); ++c)
+                            matched[c] = false;
+                    }
+                    ++p;
+                }
+            }
+        };
+
+        unmarkTerms(whitelist_);
+        unmarkTerms(boilerplate_);
+    }
+
     int matchedChars = 0;
     for (int i = 0; i < textLen; ++i)
         if (matched[i]) ++matchedChars;
@@ -583,6 +761,112 @@ ScanReport PlagiarismEngine::scan(const std::string& queryText,
     delete[] wordStarts;
     delete[] matched;
     return report;
+}
+
+// Function: rankSources
+RawBuffer<SourceScore> PlagiarismEngine::rankSources(
+    const std::string& queryText,
+    const std::string& queryFilename,
+    double radius,
+    int topK) const
+{
+    RawBuffer<SourceScore> scores;
+    emitTrace("rankSources start file=\"" + queryFilename + "\" textLen="
+            + std::to_string(queryText.size())
+            + " radius=" + std::to_string(radius)
+            + " topK=" + std::to_string(topK));
+    if (tree_.empty() || queryText.empty()) {
+        emitTrace("rankSources aborted reason=empty-tree-or-query");
+        return scores;
+    }
+    std::string cleaned = preprocessText(queryText);
+    RawBuffer<std::string> words = tokenize(cleaned);
+    if (words.count() < ngramSize_) {
+        emitTrace("rankSources aborted reason=query-shorter-than-ngram-window");
+        return scores;
+    }
+    int totalQueryNgrams = words.count() - ngramSize_ + 1;
+    int* wordStarts = new int[words.count()];
+    int pos = 0;
+    for (int i = 0; i < words.count(); ++i) {
+        wordStarts[i] = pos;
+        pos += static_cast<int>(words[i].size()) + 1;
+    }
+    RawBuffer<double> simSums;
+    for (int i = 0; i <= words.count() - ngramSize_; ++i) {
+        std::string ngramText;
+        for (int j = 0; j < ngramSize_; ++j) {
+            if (j > 0) ngramText += ' ';
+            ngramText += words[i + j];
+        }
+        NGram queryNgram(ngramText, queryFilename, wordStarts[i], 0, i);
+        double normalizedRadius = radius;
+        if (normalizedRadius < 0.0) normalizedRadius = 0.0;
+        double effectiveRadius = normalizedRadius
+                     * static_cast<double>(queryNgram.text.size());
+        RawBuffer<SearchResult> results = tree_.range_query(
+            queryNgram, effectiveRadius);
+        if (results.count() == 0) continue;
+        int bestIdx = 0;
+        for (int r = 1; r < results.count(); ++r) {
+            if (results[r].distance < results[bestIdx].distance)
+                bestIdx = r;
+        }
+        const std::string& src = results[bestIdx].ngram.sourceFile;
+        int queryLen = static_cast<int>(queryNgram.text.size());
+        int matchLen = static_cast<int>(results[bestIdx].ngram.text.size());
+        double maxLen = static_cast<double>(queryLen > matchLen
+                                            ? queryLen : matchLen);
+        double normDist = (maxLen > 0.0)
+            ? (results[bestIdx].distance / maxLen)
+            : 0.0;
+        if (normDist > 1.0) normDist = 1.0;
+        double similarity = 1.0 - normDist;
+        int sourceIdx = -1;
+        for (int s = 0; s < scores.count(); ++s) {
+            if (scores[s].sourceFile == src) {
+                sourceIdx = s;
+                break;
+            }
+        }
+        if (sourceIdx < 0) {
+            scores.append(SourceScore(src));
+            simSums.append(0.0);
+            sourceIdx = scores.count() - 1;
+        }
+        scores[sourceIdx].matchedNgrams += 1;
+        simSums[sourceIdx] += similarity;
+    }
+    for (int i = 0; i < scores.count(); ++i) {
+        scores[i].coveragePercent = (totalQueryNgrams > 0)
+            ? (100.0 * static_cast<double>(scores[i].matchedNgrams)
+               / static_cast<double>(totalQueryNgrams))
+            : 0.0;
+        scores[i].avgSimilarity = (scores[i].matchedNgrams > 0)
+            ? (simSums[i] / static_cast<double>(scores[i].matchedNgrams))
+            : 0.0;
+    }
+    for (int i = 0; i < scores.count() - 1; ++i) {
+        int best = i;
+        for (int j = i + 1; j < scores.count(); ++j) {
+            if (scores[j].matchedNgrams > scores[best].matchedNgrams ||
+                (scores[j].matchedNgrams == scores[best].matchedNgrams &&
+                 scores[j].avgSimilarity > scores[best].avgSimilarity)) {
+                best = j;
+            }
+        }
+        if (best != i) {
+            scores.swapElements(i, best);
+        }
+    }
+    if (topK > 0 && scores.count() > topK) {
+        while (scores.count() > topK)
+            scores.removeAt(scores.count() - 1);
+    }
+    emitTrace("rankSources done sources=" + std::to_string(scores.count())
+            + " totalQueryNgrams=" + std::to_string(totalQueryNgrams));
+    delete[] wordStarts;
+    return scores;
 }
 // Function: setPipelineTraceCallback
 void PlagiarismEngine::setPipelineTraceCallback(const std::function<void(const std::string&)>& cb) const {

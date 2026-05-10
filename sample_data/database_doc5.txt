@@ -1,3 +1,10 @@
+Habib University — Department of Computer Science
+Course: CS 201 Data Structures and Algorithms
+Semester: Fall 2025 — Final Examination
+Student Name: _________________________ Student ID: _________________________
+
+Question 5: Explain the design of distributed systems.
+
 Distributed systems allow applications to run across multiple machines while appearing as a single service.
 Replication improves availability by keeping copies of data on separate nodes.
 Partitioning divides data into shards so read and write load can scale horizontally.

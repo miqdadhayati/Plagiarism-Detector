@@ -7,6 +7,7 @@
 #include <string>
 #include <functional>
 #include <unordered_map>
+#include <vector>
 
 // Indexed file metadata.
 struct FileRecord {
@@ -32,14 +33,55 @@ struct ScanReport {
     ScanReport() : matchPercentage(0.0) {}
 };
 
+// Per-source ranking score.
+struct SourceScore {
+    std::string sourceFile;
+    int         matchedNgrams;
+    double      coveragePercent;
+    double      avgSimilarity;
+
+    SourceScore()
+        : matchedNgrams(0), coveragePercent(0.0), avgSimilarity(0.0) {}
+    explicit SourceScore(const std::string& f)
+        : sourceFile(f), matchedNgrams(0), coveragePercent(0.0), avgSimilarity(0.0) {}
+};
+
+// A single synonym substitution record for display.
+struct SynonymMapping {
+    std::string originalWord;   // Surface form in the text
+    std::string rootToken;      // Canonical root it was mapped to
+
+    SynonymMapping() {}
+    SynonymMapping(const std::string& orig, const std::string& root)
+        : originalWord(orig), rootToken(root) {}
+};
+
+// One entry in the synonym dictionary: root + all its synonyms.
+struct SynonymDictEntry {
+    std::string              rootToken;
+    std::vector<std::string> synonyms;
+};
+
+#if defined(__has_include)
+#  if __has_include(<QMetaType>)
+#    include <QMetaType>
+#    define PLAGIARISM_HAVE_QT_META 1
+#  endif
+#endif
+
+#if defined(PLAGIARISM_HAVE_QT_META)
+Q_DECLARE_METATYPE(ScanReport)
+#endif
+
 // Main plagiarism indexing and scanning engine.
 class PlagiarismEngine {
 private:
     VPTree                  tree_;
     RawBuffer<FileRecord>   indexedFiles_;
-    RawBuffer<std::string>  boilerplate_;   // Phrases to strip before indexing/scanning
-    RawBuffer<std::string>  whitelist_;     // Words/phrases to ignore
+    RawBuffer<std::string>  boilerplate_;   // Auto-detected phrases from document commonalities
+    RawBuffer<std::string>  whitelist_;     // User-specified words/phrases to ignore
     int                     ngramSize_;     // Number of words per n-gram
+    double                  boilerplateThreshold_;  // Fraction of docs a phrase must appear in
     mutable std::function<void(const std::string&)> traceCallback_;
     mutable bool            traceDataStructure_;
 
@@ -104,11 +146,14 @@ public:
     void clearWhitelist();
     const RawBuffer<std::string>& whitelist() const { return whitelist_; }
 
-    // Boilerplate operations.
-    void addBoilerplatePhrase(const std::string& phrase);
-    void removeBoilerplatePhrase(int index);
-    void clearBoilerplate();
+    // Boilerplate: auto-detected from document commonalities.
+    // Scans all indexed files and finds n-grams that appear in >= threshold
+    // fraction of documents. Those common phrases are treated as boilerplate.
+    // Returns the number of boilerplate phrases detected.
+    int detectBoilerplate();
     const RawBuffer<std::string>& boilerplate() const { return boilerplate_; }
+    void setBoilerplateThreshold(double t);
+    double boilerplateThreshold() const { return boilerplateThreshold_; }
 
     // Load a synonym dictionary from disk. Each line of the file is a CSV
     // record formatted as:
@@ -119,6 +164,17 @@ public:
     // "SPEED_ADJ" without case mangling. Returns true if the file was opened
     // and parsed successfully; false on I/O failure.
     bool loadSynonymDictionary(const std::string& filePath);
+
+    // Synonym dictionary stats.
+    int  synonymCount() const { return static_cast<int>(synonymMap_.size()); }
+    bool synonymsLoaded() const { return !synonymMap_.empty(); }
+
+    // Get the full synonym dictionary grouped by root token, for display.
+    std::vector<SynonymDictEntry> getSynonymDictionary() const;
+
+    // Analyse text and report every word that gets synonym-mapped.
+    // Returns one SynonymMapping per substitution found.
+    std::vector<SynonymMapping> getSynonymMappingReport(const std::string& text) const;
 
     // Add and index a file.
     bool addFile(const std::string& filePath);
@@ -142,6 +198,12 @@ public:
     ScanReport scan(const std::string& queryText,
                     const std::string& queryFilename,
                     double radius) const;
+
+    // Rank matched sources by query n-gram hits.
+    RawBuffer<SourceScore> rankSources(const std::string& queryText,
+                                       const std::string& queryFilename,
+                                       double radius,
+                                       int topK) const;
 
     // Set trace callback.
     void setPipelineTraceCallback(const std::function<void(const std::string&)>& cb) const;

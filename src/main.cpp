@@ -1,9 +1,11 @@
 #include <QApplication>
+#include <QMetaType>
 #include "mainwindow.h"
 
 // Function: main
 int main(int argc, char* argv[]) {
     QApplication app(argc, argv);
+    qRegisterMetaType<ScanReport>("ScanReport");
     app.setApplicationName("VP-Tree Plagiarism Detector");
     app.setApplicationVersion("1.0.0");
     app.setOrganizationName("VPTreePlagiarism");

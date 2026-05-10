@@ -1,3 +1,10 @@
+Habib University — Department of Computer Science
+Course: CS 201 Data Structures and Algorithms
+Semester: Fall 2025 — Final Examination
+Student Name: _________________________ Student ID: _________________________
+
+Question 3: Explain graph algorithms and their applications.
+
 Graph algorithms are essential for route planning, network design, and recommendation systems.
 A graph is made of vertices and edges, where edges capture relationships between entities.
 Breadth first search is commonly used to explore unweighted graphs level by level.

@@ -1,9 +1,0 @@
-My project combines algorithm engineering with quality assurance practices.
-Graph algorithms are essential for route planning, network design, and recommendation systems.
-For weighted graphs, Dijkstra's algorithm computes shortest paths when all edge weights are non negative.
-In our implementation we also benchmark memory usage and latency under varying graph sizes.
-
-Software testing improves reliability by detecting defects before release.
-Regression testing ensures that new changes do not break previously working functionality.
-Continuous integration pipelines run tests on every commit to prevent unstable builds.
-I added custom dashboards to track flaky tests and prioritize fixes.

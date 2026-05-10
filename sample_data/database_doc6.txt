@@ -1,0 +1,13 @@
+Habib University — Department of Computer Science
+Course: CS 201 Data Structures and Algorithms
+Semester: Fall 2025 — Final Examination
+Student Name: _________________________ Student ID: _________________________
+
+Question 6: Describe database indexing techniques.
+
+Database systems organize data for reliable storage and fast queries. Indexes like
+B-trees and LSM trees accelerate lookups by keeping ordered keys on disk. Query
+planners choose join orders and access paths based on cost estimates. Write ahead logs
+and checkpoints improve durability so data is not lost after failures. Secondary
+indexes, composite keys, and covering indexes reduce IO when the workload is read
+heavy. Good database design balances normalization, consistency, and performance.

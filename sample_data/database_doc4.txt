@@ -1,3 +1,10 @@
+Habib University — Department of Computer Science
+Course: CS 201 Data Structures and Algorithms
+Semester: Fall 2025 — Final Examination
+Student Name: _________________________ Student ID: _________________________
+
+Question 4: Discuss software testing methodologies.
+
 Software testing improves reliability by detecting defects before release.
 Unit tests verify small components in isolation and provide fast feedback for developers.
 Integration tests validate interactions between modules, services, and external dependencies.

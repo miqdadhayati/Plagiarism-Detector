@@ -1,3 +1,10 @@
+Habib University — Department of Computer Science
+Course: CS 201 Data Structures and Algorithms
+Semester: Fall 2025 — Final Examination
+Student Name: _________________________ Student ID: _________________________
+
+Question 1: Explain the role of machine learning in modern computing.
+
 Machine learning is a subset of artificial intelligence that focuses on building systems
 that learn from data. Instead of being explicitly programmed to perform a task, these
 systems use algorithms to parse data, learn from it, and then make predictions or
@@ -5,7 +12,8 @@ decisions. The field has grown tremendously in recent years, driven by increases
 computational power and the availability of large datasets. Deep learning, a further
 subset of machine learning, uses neural networks with many layers to model complex
 patterns in data. Applications range from image recognition and natural language
-processing to autonomous vehicles and medical diagnosis. The key advantage of machine
-learning is its ability to improve performance over time as more data becomes available.
+processing to autonomous vehicles and medical diagnosis.
 Supervised learning, unsupervised learning, and reinforcement learning represent the
-three main paradigms in the field today.
+three main paradigms in the field today. Model evaluation often relies on held out
+validation data, and optimization methods like gradient descent are used to tune
+parameters by minimizing a loss function.

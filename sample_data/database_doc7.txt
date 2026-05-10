@@ -1,0 +1,12 @@
+Habib University — Department of Computer Science
+Course: CS 201 Data Structures and Algorithms
+Semester: Fall 2025 — Final Examination
+Student Name: _________________________ Student ID: _________________________
+
+Question 7: Explain optimization techniques in machine learning.
+
+Optimization in machine learning often relies on gradient descent to minimize a loss
+function. A learning rate controls step size; too large can diverge, too small slows
+convergence. Regularization reduces overfitting by penalizing large weights. Stochastic
+gradient descent uses mini-batches for efficiency on large datasets. Convex objectives
+have global minima, while nonconvex objectives require careful tuning and monitoring.

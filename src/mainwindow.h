@@ -11,7 +11,6 @@
 #include <QProgressBar>
 #include <QThread>
 #include <QMutex>
-#include <QTimer>
 #include <QStringList>
 
 #include "engine.h"
@@ -26,7 +25,6 @@ public:
                double radius);
 
     void run() override;
-    QStringList traceLines() const { return traceLines_; }
 
 signals:
     void scanComplete(ScanReport report);
@@ -36,7 +34,6 @@ private:
     std::string             text_;
     std::string             filename_;
     double                  radius_;
-    QStringList             traceLines_;
 };
 
 // Main GUI window.
@@ -52,10 +49,9 @@ private slots:
     void onRemoveDatabaseFile();
     void onScanFile();
     void onLoadQuickDemo();
-    void onVisualizeOperationsDemo();
+    void onLoadSynonymDemo();
 
-    void onAddBoilerplatePhrase();
-    void onRemoveBoilerplatePhrase();
+    void onAutoDetectBoilerplate();
     void onAddWhitelistWord();
     void onRemoveWhitelistWord();
 
@@ -65,11 +61,6 @@ private slots:
 
     void onRescan();
 
-    void onTracePlaybackTick();
-    void onTracePlayPause();
-    void onTraceNextStep();
-    void onTraceSpeedChanged(int value);
-
 private:
     void setupUI();
     void setupConnections();
@@ -78,13 +69,11 @@ private:
     void updateWhitelistView();
     void updateTreeStats();
     void applyHeatmap(const ScanReport& report);
-    void startTracePlayback(const QStringList& lines);
-    QString explainTraceLine(const QString& line) const;
-    void appendTraceStep(int index);
 
     PlagiarismEngine engine_;
     std::string      currentQueryText_;
     std::string      currentQueryFile_;
+    std::string      currentQueryName_;
     ScanWorker*      scanWorker_;
 
 
@@ -92,16 +81,16 @@ private:
     QPushButton*  addFileBtn_;
     QPushButton*  removeFileBtn_;
     QPushButton*  quickDemoBtn_;
-    QPushButton*  opsDemoBtn_;
+    QPushButton*  synonymDemoBtn_;
     QListWidget*  boilerplateList_;
-    QLineEdit*    boilerplateInput_;
-    QPushButton*  addBoilerplateBtn_;
-    QPushButton*  removeBoilerplateBtn_;
+    QPushButton*  autoDetectBoilerplateBtn_;
     QListWidget*  whitelistList_;
     QLineEdit*    whitelistInput_;
     QPushButton*  addWhitelistBtn_;
     QPushButton*  removeWhitelistBtn_;
     QLabel*       treeStatsLabel_;
+    QLabel*       synonymStatusLabel_;
+    QTextEdit*    synonymDemoOutput_;
 
     QTextEdit*    heatmapDisplay_;
     QPushButton*  scanBtn_;
@@ -112,20 +101,7 @@ private:
     QLabel*       matchPercentLabel_;
     QListWidget*  matchFilesList_;
     QProgressBar* progressBar_;
-    QTextEdit*    opsTraceDisplay_;
-    QProgressBar* opsTraceProgress_;
-    QTextEdit*    opsExplainDisplay_;
-    QPushButton*  opsPlayPauseBtn_;
-    QPushButton*  opsNextStepBtn_;
-    QSlider*      opsSpeedSlider_;
-    QLabel*       opsSpeedLabel_;
-    QLabel*       opsStepLabel_;
-
-    QTimer*       opsPlaybackTimer_;
-    QStringList   opsTraceLines_;
-    QStringList   opsTraceExplainLines_;
-    int           opsTraceIndex_;
-    bool          opsPlaybackPaused_;
+    double        lastScanRadius_;
 };
 
 #endif // MAINWINDOW_H

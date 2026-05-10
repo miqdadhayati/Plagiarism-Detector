@@ -1,11 +1,17 @@
+Habib University — Department of Computer Science
+Course: CS 201 Data Structures and Algorithms
+Semester: Fall 2025 — Final Examination
+Student Name: _________________________ Student ID: _________________________
+
+Question 2: Describe the most common data structures and their use cases.
+
 Data structures are fundamental building blocks in computer science. They provide
 organized ways to store and manage data efficiently. Common data structures include
 arrays, linked lists, trees, and hash tables. Each data structure has its own strengths
-and weaknesses depending on the operations that need to be performed. For example,
-arrays provide constant time access to elements by index, while linked lists allow
-efficient insertion and deletion at arbitrary positions. Trees are hierarchical
-structures used for searching and sorting, with binary search trees being among the
-most widely used. Hash tables provide near constant time lookups by mapping keys to
-values through a hash function. Understanding when to use each data structure is a
-critical skill for software engineers and directly impacts the performance and
-scalability of applications.
+and weaknesses depending on the operations that need to be performed. Arrays provide
+constant time access to elements by index, while linked lists allow efficient insertion
+and deletion at arbitrary positions. Trees are hierarchical structures used for
+searching and sorting, with binary search trees and balanced trees being widely used.
+Hash tables provide near constant time lookups by mapping keys to values through a hash
+function. Understanding when to use each data structure is a critical skill for
+software engineers and directly impacts the performance and scalability of applications.

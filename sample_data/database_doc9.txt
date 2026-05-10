@@ -1,0 +1,12 @@
+Habib University — Department of Computer Science
+Course: CS 201 Data Structures and Algorithms
+Semester: Fall 2025 — Final Examination
+Student Name: _________________________ Student ID: _________________________
+
+Question 9: Explain observability in production systems.
+
+Observability relies on metrics, logs, and traces to understand system behavior.
+Metrics provide time series signals used to track service level objectives. Logs capture
+discrete events with context, while distributed tracing links requests across services.
+Dashboards and alerts help teams detect regressions quickly and diagnose incidents. A
+well instrumented system makes failures visible and debuggable.

@@ -1,0 +1,12 @@
+Habib University — Department of Computer Science
+Course: CS 201 Data Structures and Algorithms
+Semester: Fall 2025 — Final Examination
+Student Name: _________________________ Student ID: _________________________
+
+Question 8: Discuss performance engineering principles.
+
+Performance engineering focuses on latency and throughput in real systems. Caching
+exploits temporal locality, while memory layout affects CPU cache behavior. Profiling
+and tracing identify hot paths and expensive allocations. Batching, vectorization, and
+parallelism improve throughput when used carefully. Engineers measure regressions to
+ensure changes do not harm responsiveness.

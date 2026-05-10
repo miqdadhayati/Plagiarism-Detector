@@ -19,7 +19,7 @@
 #include <QStatusBar>
 #include <QMenuBar>
 #include <QToolBar>
-#include <QRegularExpression>
+#include <cctype>
 
 namespace {
 // Function: findSampleFilePath
@@ -77,37 +77,16 @@ ScanWorker::ScanWorker(const PlagiarismEngine* engine,
     : engine_(engine), text_(text), filename_(filename), radius_(radius) {}
 // Function: run
 void ScanWorker::run() {
-    traceLines_.clear();
-    int traceBudget = 420;
-    bool traceTruncated = false;
-    engine_->setPipelineTraceCallback([this, &traceBudget, &traceTruncated](const std::string& line) {
-        if (traceBudget > 0) {
-            traceLines_.append(QString::fromStdString(line));
-            --traceBudget;
-            return;
-        }
-        if (!traceTruncated) {
-            traceLines_.append("... trace truncated ...");
-            traceTruncated = true;
-        }
-    });
-    engine_->setDataStructureTraceEnabled(true);
     ScanReport report = engine_->scan(text_, filename_, radius_);
-    engine_->setDataStructureTraceEnabled(false);
-    engine_->clearPipelineTraceCallback();
     emit scanComplete(report);
 }
 // Function: MainWindow
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent)
     , scanWorker_(nullptr)
-    , opsPlaybackTimer_(nullptr)
-    , opsTraceIndex_(0)
-    , opsPlaybackPaused_(false)
+    , lastScanRadius_(0.30)
 {
     setupUI();
-    opsPlaybackTimer_ = new QTimer(this);
-    opsPlaybackTimer_->setInterval(700);
     setupConnections();
 
     // Thesaurus Catcher: load synonym dictionary once at startup.
@@ -115,8 +94,16 @@ MainWindow::MainWindow(QWidget* parent)
     // application directory, so this resolves correctly regardless of
     // how the .exe is launched.
     QString synPath = findSampleFilePath("synonyms.csv");
+    bool synonymsLoaded = false;
     if (!synPath.isEmpty()) {
-        engine_.loadSynonymDictionary(synPath.toStdString());
+        synonymsLoaded = engine_.loadSynonymDictionary(synPath.toStdString());
+    }
+    if (synonymStatusLabel_) {
+        synonymStatusLabel_->setText(
+            synonymsLoaded
+                ? ("Synonym Dictionary: loaded ("
+                   + QString::number(engine_.synonymCount()) + " entries)")
+                : "Synonym Dictionary: not loaded");
     }
 
     updateTreeStats();
@@ -292,30 +279,20 @@ void MainWindow::setupUI() {
     dbLayout->addLayout(dbBtnLayout);
     quickDemoBtn_ = new QPushButton("Load Quick Demo");
     dbLayout->addWidget(quickDemoBtn_);
-    opsDemoBtn_ = new QPushButton("Visualize DS Ops");
-    dbLayout->addWidget(opsDemoBtn_);
     leftLayout->addWidget(dbGroup);
     treeStatsLabel_ = new QLabel("Tree: empty");
     treeStatsLabel_->setObjectName("sectionTitle");
     leftLayout->addWidget(treeStatsLabel_);
     QGroupBox* wlGroup = new QGroupBox("Boilerplate & Whitelist");
     QVBoxLayout* wlLayout = new QVBoxLayout(wlGroup);
-    QLabel* boilerplateTitle = new QLabel("BOILERPLATE PHRASES");
+    QLabel* boilerplateTitle = new QLabel("BOILERPLATE (auto-detected)");
     boilerplateTitle->setObjectName("sectionTitle");
     wlLayout->addWidget(boilerplateTitle);
     boilerplateList_ = new QListWidget();
-    boilerplateList_->setMaximumHeight(72);
+    boilerplateList_->setMaximumHeight(90);
     wlLayout->addWidget(boilerplateList_);
-    QHBoxLayout* bpInputLayout = new QHBoxLayout();
-    boilerplateInput_ = new QLineEdit();
-    boilerplateInput_->setPlaceholderText("Enter boilerplate phrase...");
-    addBoilerplateBtn_ = new QPushButton("+");
-    addBoilerplateBtn_->setMaximumWidth(36);
-    bpInputLayout->addWidget(boilerplateInput_);
-    bpInputLayout->addWidget(addBoilerplateBtn_);
-    wlLayout->addLayout(bpInputLayout);
-    removeBoilerplateBtn_ = new QPushButton("Remove Boilerplate");
-    wlLayout->addWidget(removeBoilerplateBtn_);
+    autoDetectBoilerplateBtn_ = new QPushButton("Auto-Detect from Documents");
+    wlLayout->addWidget(autoDetectBoilerplateBtn_);
 
     QLabel* whitelistTitle = new QLabel("WHITELIST TERMS");
     whitelistTitle->setObjectName("sectionTitle");
@@ -390,50 +367,26 @@ void MainWindow::setupUI() {
     matchTitle->setAlignment(Qt::AlignCenter);
     reportLayout->addWidget(matchTitle);
     rightLayout->addWidget(reportGroup);
-    QGroupBox* sourcesGroup = new QGroupBox("Matched Sources");
+    QGroupBox* sourcesGroup = new QGroupBox("Source Ranking");
     QVBoxLayout* sourcesLayout = new QVBoxLayout(sourcesGroup);
     matchFilesList_ = new QListWidget();
     sourcesLayout->addWidget(matchFilesList_);
-    rightLayout->addWidget(sourcesGroup, 1);
-    QGroupBox* traceGroup = new QGroupBox("Backend Operation Trace");
-    QVBoxLayout* traceLayout = new QVBoxLayout(traceGroup);
-    opsStepLabel_ = new QLabel("Step 0 / 0");
-    opsStepLabel_->setObjectName("sectionTitle");
-    traceLayout->addWidget(opsStepLabel_);
-    QHBoxLayout* playbackControls = new QHBoxLayout();
-    opsPlayPauseBtn_ = new QPushButton("Pause");
-    opsNextStepBtn_ = new QPushButton("Next Step");
-    playbackControls->addWidget(opsPlayPauseBtn_);
-    playbackControls->addWidget(opsNextStepBtn_);
-    traceLayout->addLayout(playbackControls);
-    QHBoxLayout* speedLayout = new QHBoxLayout();
-    opsSpeedLabel_ = new QLabel("Step delay: 700 ms");
-    opsSpeedSlider_ = new QSlider(Qt::Horizontal);
-    opsSpeedSlider_->setRange(200, 1600);
-    opsSpeedSlider_->setValue(700);
-    speedLayout->addWidget(opsSpeedLabel_);
-    speedLayout->addWidget(opsSpeedSlider_);
-    traceLayout->addLayout(speedLayout);
-    opsTraceProgress_ = new QProgressBar();
-    opsTraceProgress_->setRange(0, 100);
-    opsTraceProgress_->setValue(0);
-    opsTraceProgress_->setTextVisible(false);
-    traceLayout->addWidget(opsTraceProgress_);
-    opsExplainDisplay_ = new QTextEdit();
-    opsExplainDisplay_->setReadOnly(true);
-    opsExplainDisplay_->setMinimumHeight(120);
-    opsExplainDisplay_->setPlaceholderText(
-        "Step-by-step explanation appears here.\n"
-        "Math and storage notes will update each step.");
-    traceLayout->addWidget(opsExplainDisplay_);
-    opsTraceDisplay_ = new QTextEdit();
-    opsTraceDisplay_->setReadOnly(true);
-    opsTraceDisplay_->setMinimumHeight(220);
-    opsTraceDisplay_->setPlaceholderText(
-        "Backend trace appears here.\n"
-        "Click 'Visualize DS Ops' to replay tree internals.");
-    traceLayout->addWidget(opsTraceDisplay_);
-    rightLayout->addWidget(traceGroup, 2);
+    rightLayout->addWidget(sourcesGroup, 2);
+    QGroupBox* synonymGroup = new QGroupBox("Synonym Dictionary");
+    QVBoxLayout* synonymLayout = new QVBoxLayout(synonymGroup);
+    synonymStatusLabel_ = new QLabel("Synonym Dictionary: not loaded");
+    synonymStatusLabel_->setObjectName("sectionTitle");
+    synonymLayout->addWidget(synonymStatusLabel_);
+    synonymDemoBtn_ = new QPushButton("Load Synonym Demo");
+    synonymLayout->addWidget(synonymDemoBtn_);
+    synonymDemoOutput_ = new QTextEdit();
+    synonymDemoOutput_->setReadOnly(true);
+    synonymDemoOutput_->setMinimumHeight(120);
+    synonymDemoOutput_->setPlaceholderText(
+        "Click 'Load Synonym Demo' to see the full synonym dictionary\n"
+        "and which words in the query map to which root tokens.");
+    synonymLayout->addWidget(synonymDemoOutput_);
+    rightLayout->addWidget(synonymGroup, 1);
     splitter->addWidget(rightPanel);
     splitter->setStretchFactor(0, 1);   // left
     splitter->setStretchFactor(1, 3);   // center
@@ -449,26 +402,16 @@ void MainWindow::setupConnections() {
             this,               &MainWindow::onScanFile);
     connect(quickDemoBtn_,      &QPushButton::clicked,
             this,               &MainWindow::onLoadQuickDemo);
-    connect(opsDemoBtn_,        &QPushButton::clicked,
-            this,               &MainWindow::onVisualizeOperationsDemo);
-        connect(addBoilerplateBtn_, &QPushButton::clicked,
-            this,               &MainWindow::onAddBoilerplatePhrase);
-        connect(removeBoilerplateBtn_, &QPushButton::clicked,
-            this,               &MainWindow::onRemoveBoilerplatePhrase);
+        connect(synonymDemoBtn_,    &QPushButton::clicked,
+            this,               &MainWindow::onLoadSynonymDemo);
+        connect(autoDetectBoilerplateBtn_, &QPushButton::clicked,
+            this,               &MainWindow::onAutoDetectBoilerplate);
     connect(addWhitelistBtn_,   &QPushButton::clicked,
             this,               &MainWindow::onAddWhitelistWord);
     connect(removeWhitelistBtn_,&QPushButton::clicked,
             this,               &MainWindow::onRemoveWhitelistWord);
     connect(strictnessSlider_,  &QSlider::valueChanged,
             this,               &MainWindow::onStrictnessChanged);
-    connect(opsPlaybackTimer_,  &QTimer::timeout,
-            this,               &MainWindow::onTracePlaybackTick);
-    connect(opsPlayPauseBtn_,   &QPushButton::clicked,
-            this,               &MainWindow::onTracePlayPause);
-    connect(opsNextStepBtn_,    &QPushButton::clicked,
-            this,               &MainWindow::onTraceNextStep);
-    connect(opsSpeedSlider_,    &QSlider::valueChanged,
-            this,               &MainWindow::onTraceSpeedChanged);
 }
 // Function: onAddDatabaseFile
 void MainWindow::onAddDatabaseFile() {
@@ -513,6 +456,7 @@ void MainWindow::onScanFile() {
     size_t sep = currentQueryFile_.find_last_of("/\\");
     std::string fname = (sep != std::string::npos)
         ? currentQueryFile_.substr(sep + 1) : currentQueryFile_;
+    currentQueryName_ = fname;
     scanFileLabel_->setText(QString::fromStdString("Scanning: " + fname));
     if (engine_.treeEmpty()) {
         heatmapDisplay_->setPlainText(
@@ -523,6 +467,7 @@ void MainWindow::onScanFile() {
         return;
     }
     double radius = strictnessSlider_->value() / 100.0;
+    lastScanRadius_ = radius;
     progressBar_->setVisible(true);
     scanBtn_->setEnabled(false);
     if (scanWorker_) {
@@ -537,22 +482,46 @@ void MainWindow::onScanFile() {
 }
 // Function: onLoadQuickDemo
 void MainWindow::onLoadQuickDemo() {
-    QString db1 = findSampleFilePath("database_doc1.txt");
-    QString db2 = findSampleFilePath("database_doc2.txt");
+    QStringList dbFiles;
+    dbFiles << "database_doc1.txt"
+            << "database_doc2.txt"
+            << "database_doc3.txt"
+            << "database_doc4.txt"
+            << "database_doc5.txt"
+            << "database_doc6.txt"
+            << "database_doc7.txt"
+            << "database_doc8.txt"
+            << "database_doc9.txt";
+    QStringList dbPaths;
+    QStringList missing;
+    for (const QString& name : dbFiles) {
+        QString path = findSampleFilePath(name);
+        if (path.isEmpty())
+            missing << name;
+        else
+            dbPaths << path;
+    }
     QString query = findSampleFilePath("query_suspicious.txt");
-    if (db1.isEmpty() || db2.isEmpty() || query.isEmpty()) {
+    if (!missing.isEmpty() || query.isEmpty()) {
+        QString details = missing.isEmpty()
+            ? "Missing demo query file."
+            : ("Missing demo files: " + missing.join(", "));
         QMessageBox::warning(
             this,
             "Quick Demo",
-            "Could not locate sample_data files. Ensure sample_data is available near the project root.");
+            details + " Ensure sample_data is available near the project root.");
         return;
     }
     while (engine_.indexedFiles().count() > 0) {
         engine_.removeFile(engine_.indexedFiles().count() - 1);
     }
-    bool ok1 = engine_.addFile(db1.toStdString());
-    bool ok2 = engine_.addFile(db2.toStdString());
-    if (!ok1 || !ok2) {
+    bool allOk = true;
+    for (const QString& path : dbPaths) {
+        if (!engine_.addFile(path.toStdString())) {
+            allOk = false;
+        }
+    }
+    if (!allOk) {
         QMessageBox::warning(this, "Quick Demo", "Failed to index sample database files.");
         return;
     }
@@ -562,147 +531,87 @@ void MainWindow::onLoadQuickDemo() {
         return;
     }
     currentQueryFile_ = query.toStdString();
+    currentQueryName_ = "query_suspicious.txt";
     scanFileLabel_->setText("Demo: query_suspicious.txt");
     updateDatabaseView();
     updateTreeStats();
     statusBar()->showMessage("Quick demo loaded. Running scan...", 3000);
     onRescan();
 }
-// Function: onVisualizeOperationsDemo
-void MainWindow::onVisualizeOperationsDemo() {
-    QStringList traceLines;
-    auto addSection = [&traceLines](const QString& title) {
-        traceLines << "";
-        traceLines << ("=== " + title + " ===");
-    };
-    VPTree demoTree;
-    demoTree.setTraceCallback([&traceLines](const std::string& message) {
-        traceLines << ("  " + QString::fromStdString(message));
-    });
-    NGram a("graph search tree", "viz_a.txt", 0, 17, 0);
-    NGram b("graph shortest path", "viz_b.txt", 0, 19, 0);
-    NGram c("neural network model", "viz_c.txt", 0, 20, 0);
-    NGram d("machine learning model", "viz_d.txt", 0, 22, 0);
-    NGram e("dynamic programming", "viz_e.txt", 0, 19, 0);
-    NGram items[5] = {a, b, c, d, e};
-    addSection("CREATE / BUILD TREE");
-    demoTree.build_tree(items, 5);
-    bool createOk = !demoTree.empty() && demoTree.size() == 5;
-    traceLines << QString("  summary: size=%1 height=%2")
-        .arg(demoTree.size())
-        .arg(VPTree::get_height(demoTree.root()));
-    traceLines << "  snapshot:";
-    appendTreeSnapshotLines(traceLines, demoTree.root(), 1, 2);
-    addSection("READ / CONTAINS");
-    bool readOk = demoTree.contains(c);
-    traceLines << QString("  contains(\"%1\") => %2")
-        .arg(compactNgramText(c.text))
-        .arg(readOk ? "true" : "false");
-    addSection("RANGE QUERY");
-    NGram query("graph search tree", "viz_query.txt", 0, 17, 0);
-    RawBuffer<SearchResult> rangeResults = demoTree.range_query(query, 0.25);
-    bool rangeOk = rangeResults.count() > 0;
-    traceLines << QString("  range matches=%1").arg(rangeResults.count());
-    int rangePreview = (rangeResults.count() < 3) ? rangeResults.count() : 3;
-    for (int i = 0; i < rangePreview; ++i) {
-        traceLines << QString("    #%1 dist=%2 src=%3 text=\"%4\"")
-            .arg(i + 1)
-            .arg(rangeResults[i].distance, 0, 'f', 2)
-            .arg(QString::fromStdString(rangeResults[i].ngram.sourceFile))
-            .arg(compactNgramText(rangeResults[i].ngram.text));
+
+// Function: onLoadSynonymDemo
+void MainWindow::onLoadSynonymDemo() {
+    QString db = findSampleFilePath("database_urban.txt");
+    QString query = findSampleFilePath("query_thesaurus.txt");
+    QString syn = findSampleFilePath("synonyms.csv");
+    if (db.isEmpty() || query.isEmpty()) {
+        QMessageBox::warning(
+            this,
+            "Synonym Demo",
+            "Could not locate synonym demo files. Ensure database_urban.txt and query_thesaurus.txt exist in sample_data.");
+        return;
     }
-    addSection("KNN QUERY");
-    RawBuffer<SearchResult> knnResults = demoTree.search_knn(query, 2);
-    bool knnOk = knnResults.count() == 2;
-    traceLines << QString("  knn neighbors=%1").arg(knnResults.count());
-    for (int i = 0; i < knnResults.count(); ++i) {
-        traceLines << QString("    #%1 dist=%2 src=%3 text=\"%4\"")
-            .arg(i + 1)
-            .arg(knnResults[i].distance, 0, 'f', 2)
-            .arg(QString::fromStdString(knnResults[i].ngram.sourceFile))
-            .arg(compactNgramText(knnResults[i].ngram.text));
+    if (!engine_.synonymsLoaded() && !syn.isEmpty()) {
+        engine_.loadSynonymDictionary(syn.toStdString());
     }
-    addSection("UPDATE");
-    NGram updatedD("machine learning systems", "viz_d.txt", 0, 24, 0);
-    bool updateOk = demoTree.update(d, updatedD)
-                 && demoTree.contains(updatedD)
-                 && !demoTree.contains(d);
-    traceLines << QString("  update result=%1")
-        .arg(updateOk ? "true" : "false");
-    traceLines << "  snapshot:";
-    appendTreeSnapshotLines(traceLines, demoTree.root(), 1, 2);
-    addSection("DELETE");
-    bool deleteOk = demoTree.remove(e) && !demoTree.contains(e) && demoTree.size() == 4;
-    traceLines << QString("  delete result=%1 size=%2")
-        .arg(deleteOk ? "true" : "false")
-        .arg(demoTree.size());
-    addSection("REBUILD / TREE INSPECTION");
-    int beforeRebuild = demoTree.size();
-    demoTree.rebuild();
-    bool rebuildOk = !demoTree.empty() && demoTree.size() == beforeRebuild;
-    bool heightOk = VPTree::get_height(demoTree.root()) >= 1;
-    bool leafOk = VPTree::is_leaf(demoTree.root()) == false;
-    traceLines << QString("  rebuild result=%1 size=%2 height=%3")
-        .arg(rebuildOk ? "true" : "false")
-        .arg(demoTree.size())
-        .arg(VPTree::get_height(demoTree.root()));
-    traceLines << QString("  root is leaf=%1")
-        .arg(leafOk ? "false (expected)" : "true (unexpected)");
-    traceLines << "  snapshot:";
-    appendTreeSnapshotLines(traceLines, demoTree.root(), 1, 2);
-    demoTree.clearTraceCallback();
-    struct OperationView {
-        const char* name;
-        bool ok;
-    };
-    OperationView ops[9] = {
-        {"CREATE", createOk},
-        {"READ", readOk},
-        {"RANGE QUERY", rangeOk},
-        {"KNN QUERY", knnOk},
-        {"UPDATE", updateOk},
-        {"DELETE", deleteOk},
-        {"REBUILD", rebuildOk},
-        {"HEIGHT", heightOk},
-        {"IS_LEAF", leafOk}
-    };
-    int passCount = 0;
-    int opCount = 9;
-    QString report = "VP-Tree Operations Visualisation\n\n";
-    matchFilesList_->clear();
-    for (int i = 0; i < opCount; ++i) {
-        if (ops[i].ok) ++passCount;
-        QString bar = ops[i].ok ? "[##########]" : "[----------]";
-        QString status = ops[i].ok ? "PASS" : "FAIL";
-        QString line = QString("%1 %2 %3")
-            .arg(QString::fromUtf8(ops[i].name), -12)
-            .arg(bar)
-            .arg(status);
-        report += line + "\n";
-        matchFilesList_->addItem(
-            QString::fromUtf8(ops[i].name) + ": " + status);
+    if (synonymStatusLabel_) {
+        synonymStatusLabel_->setText(
+            engine_.synonymsLoaded()
+                ? ("Synonym Dictionary: loaded (" + QString::number(engine_.synonymCount()) + " entries)")
+                : "Synonym Dictionary: not loaded");
     }
-    double pct = (static_cast<double>(passCount) * 100.0)
-               / static_cast<double>(opCount);
-    matchPercentLabel_->setText(QString::number(pct, 'f', 1) + "%");
-    if (pct < 100.0) {
-        matchPercentLabel_->setStyleSheet(
-            "font-size:28px; font-weight:bold; color:#fab387; padding:10px;");
-    } else {
-        matchPercentLabel_->setStyleSheet(
-            "font-size:28px; font-weight:bold; color:#a6e3a1; padding:10px;");
+    while (engine_.indexedFiles().count() > 0) {
+        engine_.removeFile(engine_.indexedFiles().count() - 1);
     }
-    scanFileLabel_->setText("DS Ops Visualisation");
-    heatmapDisplay_->setPlainText(
-        "Operation summary updated.\n"
-        "Right panel now plays backend steps one by one.\n"
-        "Use Pause / Next Step and the delay slider to explain each step clearly.");
-    startTracePlayback(traceLines);
-    statusBar()->showMessage(
-        QString("Operations demo running: %1/%2 checks passed")
-            .arg(passCount)
-            .arg(opCount),
-        8000);
+    bool ok = engine_.addFile(db.toStdString());
+    if (!ok) {
+        QMessageBox::warning(this, "Synonym Demo", "Failed to index database_urban.txt.");
+        return;
+    }
+    currentQueryText_ = PlagiarismEngine::readFile(query.toStdString());
+    if (currentQueryText_.empty()) {
+        QMessageBox::warning(this, "Synonym Demo", "Failed to read query_thesaurus.txt.");
+        return;
+    }
+    currentQueryFile_ = query.toStdString();
+    currentQueryName_ = "query_thesaurus.txt";
+    scanFileLabel_->setText("Synonym Demo: query_thesaurus.txt");
+    updateDatabaseView();
+    updateTreeStats();
+    if (synonymDemoOutput_) {
+        // Build the detailed synonym dictionary display.
+        QString output;
+        output += QString::fromUtf8("\u2550\u2550\u2550 Synonym Dictionary \u2550\u2550\u2550\n");
+        auto dict = engine_.getSynonymDictionary();
+        for (const auto& entry : dict) {
+            QString root = QString::fromStdString(entry.rootToken);
+            QString syns;
+            for (size_t s = 0; s < entry.synonyms.size(); ++s) {
+                if (s > 0) syns += ", ";
+                syns += QString::fromStdString(entry.synonyms[s]);
+            }
+            output += root + QString::fromUtf8("  \u2190 ") + syns + "\n";
+        }
+
+        // Show which words in the query get mapped.
+        output += QString::fromUtf8("\n\u2550\u2550\u2550 Query Word Mappings \u2550\u2550\u2550\n");
+        auto mappings = engine_.getSynonymMappingReport(currentQueryText_);
+        if (mappings.empty()) {
+            output += "(no synonym substitutions found in query)\n";
+        } else {
+            for (const auto& m : mappings) {
+                output += QString::fromUtf8("\"")
+                    + QString::fromStdString(m.originalWord)
+                    + QString::fromUtf8("\"  \u2192  ")
+                    + QString::fromStdString(m.rootToken)
+                    + "  (synonym match)\n";
+            }
+        }
+
+        synonymDemoOutput_->setPlainText(output);
+    }
+    statusBar()->showMessage("Synonym demo loaded. Running scan...", 3000);
+    onRescan();
 }
 // Function: onScanFinished
 void MainWindow::onScanFinished(ScanReport report) {
@@ -720,73 +629,88 @@ void MainWindow::onScanFinished(ScanReport report) {
     else
         matchPercentLabel_->setStyleSheet(
             "font-size:28px; font-weight:bold; color:#a6e3a1; padding:10px;");
-    matchFilesList_->clear();
-    for (int i = 0; i < report.matchedFiles.count(); ++i) {
-        matchFilesList_->addItem(
-            QString::fromStdString(report.matchedFiles[i]));
+    std::string queryName = currentQueryName_;
+    if (queryName.empty()) {
+        queryName = currentQueryFile_;
+        size_t sep = queryName.find_last_of("/\\");
+        if (sep != std::string::npos)
+            queryName = queryName.substr(sep + 1);
     }
-    statusBar()->showMessage(
-        QString("Scan complete — %1 match, %2 source(s) found")
-            .arg(pctText)
-            .arg(report.matchedFiles.count()),
-        10000);
-    if (scanWorker_) {
-        QStringList scanTrace = scanWorker_->traceLines();
-        if (!scanTrace.isEmpty()) {
-            startTracePlayback(scanTrace);
-            statusBar()->showMessage(
-                QString("Scan complete — %1 match. Backend scan trace loaded (%2 steps).")
-                    .arg(pctText)
-                    .arg(scanTrace.count()),
-                10000);
+    RawBuffer<SourceScore> scores = engine_.rankSources(
+        currentQueryText_, queryName, lastScanRadius_, 12);
+    matchFilesList_->clear();
+    if (scores.count() > 0) {
+        for (int i = 0; i < scores.count(); ++i) {
+            QString src = QString::fromStdString(scores[i].sourceFile);
+            QString hits = QString::number(scores[i].matchedNgrams);
+            QString cover = QString::number(scores[i].coveragePercent, 'f', 1);
+            QString sim = QString::number(scores[i].avgSimilarity, 'f', 2);
+            matchFilesList_->addItem(
+                src + " | hits:" + hits + " | cover:" + cover + "% | sim:" + sim);
+        }
+    } else {
+        for (int i = 0; i < report.matchedFiles.count(); ++i) {
+            matchFilesList_->addItem(
+                QString::fromStdString(report.matchedFiles[i]));
         }
     }
+    int sourceCount = (scores.count() > 0)
+        ? scores.count()
+        : report.matchedFiles.count();
+    statusBar()->showMessage(
+        QString("Scan complete — %1 match, %2 source(s) ranked")
+            .arg(pctText)
+            .arg(sourceCount),
+        10000);
+    if (synonymDemoOutput_ && queryName == "query_thesaurus.txt") {
+        // Append the match results below the already-displayed dictionary.
+        QString existing = synonymDemoOutput_->toPlainText();
+        existing += QString::fromUtf8("\n\u2550\u2550\u2550 Match Results \u2550\u2550\u2550\n");
+
+        bool found = false;
+        for (int i = 0; i < scores.count(); ++i) {
+            if (scores[i].sourceFile == "database_urban.txt") {
+                found = true;
+                existing += "database_urban.txt MATCHED via synonyms\n"
+                    + QString("  Hits: %1 | Cover: %2% | Avg sim: %3\n")
+                        .arg(scores[i].matchedNgrams)
+                        .arg(scores[i].coveragePercent, 0, 'f', 1)
+                        .arg(scores[i].avgSimilarity, 0, 'f', 2);
+                break;
+            }
+        }
+        if (!found) {
+            existing += "database_urban.txt: no match found in ranking.\n";
+        }
+        synonymDemoOutput_->setPlainText(existing);
+    }
 }
-// Function: onAddBoilerplatePhrase
-void MainWindow::onAddBoilerplatePhrase() {
+// Function: onAutoDetectBoilerplate
+void MainWindow::onAutoDetectBoilerplate() {
     if (scanWorker_ && scanWorker_->isRunning()) {
-        statusBar()->showMessage("Wait for current scan to finish before editing filters.", 3000);
+        statusBar()->showMessage("Wait for current scan to finish before detecting boilerplate.", 3000);
         return;
     }
-    QString phrase = boilerplateInput_->text().trimmed();
-    if (phrase.isEmpty()) return;
-    engine_.addBoilerplatePhrase(phrase.toStdString());
-    boilerplateInput_->clear();
+    if (engine_.indexedFiles().count() < 2) {
+        QMessageBox::information(this, "Auto-Detect Boilerplate",
+            "Need at least 2 indexed documents to detect boilerplate.\n"
+            "Add more database files first.");
+        return;
+    }
+    int detected = engine_.detectBoilerplate();
     updateBoilerplateView();
 
-    if (engine_.indexedFiles().count() > 0) {
-        bool rebuilt = engine_.rebuildIndexWithFilters();
+    if (detected > 0 && engine_.indexedFiles().count() > 0) {
+        engine_.rebuildIndexWithFilters();
         updateDatabaseView();
         updateTreeStats();
         statusBar()->showMessage(
-            rebuilt
-                ? "Boilerplate added. Existing index rebuilt with active filters."
-                : "Boilerplate added, but some indexed files could not be rebuilt.",
+            QString("Auto-detected %1 boilerplate phrase(s). Index rebuilt.")
+                .arg(detected),
             5000);
-    }
-    onRescan();
-}
-
-// Function: onRemoveBoilerplatePhrase
-void MainWindow::onRemoveBoilerplatePhrase() {
-    if (scanWorker_ && scanWorker_->isRunning()) {
-        statusBar()->showMessage("Wait for current scan to finish before editing filters.", 3000);
-        return;
-    }
-    int row = boilerplateList_->currentRow();
-    if (row < 0) return;
-    engine_.removeBoilerplatePhrase(row);
-    updateBoilerplateView();
-
-    if (engine_.indexedFiles().count() > 0) {
-        bool rebuilt = engine_.rebuildIndexWithFilters();
-        updateDatabaseView();
-        updateTreeStats();
+    } else {
         statusBar()->showMessage(
-            rebuilt
-                ? "Boilerplate removed. Existing index rebuilt with active filters."
-                : "Boilerplate removed, but some indexed files could not be rebuilt.",
-            5000);
+            "No common boilerplate phrases found across documents.", 5000);
     }
     onRescan();
 }
@@ -855,9 +779,14 @@ void MainWindow::onRescan() {
     if (currentQueryText_.empty() || engine_.treeEmpty()) return;
     if (scanWorker_ && scanWorker_->isRunning()) return;
     double radius = strictnessSlider_->value() / 100.0;
-    std::string fname = currentQueryFile_;
-    size_t sep = fname.find_last_of("/\\");
-    if (sep != std::string::npos) fname = fname.substr(sep + 1);
+    lastScanRadius_ = radius;
+    std::string fname = currentQueryName_;
+    if (fname.empty()) {
+        fname = currentQueryFile_;
+        size_t sep = fname.find_last_of("/\\");
+        if (sep != std::string::npos) fname = fname.substr(sep + 1);
+        currentQueryName_ = fname;
+    }
     progressBar_->setVisible(true);
     scanBtn_->setEnabled(false);
     if (scanWorker_) {
@@ -869,316 +798,6 @@ void MainWindow::onRescan() {
     connect(scanWorker_, &ScanWorker::scanComplete,
             this,        &MainWindow::onScanFinished);
     scanWorker_->start();
-}
-// Function: explainTraceLine
-QString MainWindow::explainTraceLine(const QString& line) const {
-    QString t = line.trimmed();
-    bool treeForwarded = false;
-    if (t.startsWith("tree ")) {
-        t = t.mid(5).trimmed();
-        treeForwarded = true;
-    }
-    if (t.isEmpty()) {
-        return "Section break. Next operation phase starts below.";
-    }
-    if (t.startsWith("index start ")) {
-        return "Indexing pipeline begins: file is read, normalized, tokenized into n-grams, then inserted into the VP-tree.";
-    }
-    if (t.startsWith("index preprocess ")) {
-        return "Text preprocessing: punctuation removed, lowercased, whitelist applied, and n-grams generated for storage.";
-    }
-    if (t.startsWith("index done ")) {
-        return "Database update complete: n-grams are stored in VP-tree nodes with updated tree size/height.";
-    }
-    if (t.startsWith("remove-file start ")) {
-        return "Delete pipeline begins: selected file's n-grams are filtered out before tree rebuild.";
-    }
-    if (t.startsWith("remove-file done ")) {
-        return "Delete pipeline complete: tree rebuilt and structural stats updated.";
-    }
-    if (t.startsWith("scan start ")) {
-        return "Plagiarism scan begins: query text enters the backend pipeline with chosen strictness radius.";
-    }
-    if (t.startsWith("scan preprocess ")) {
-        return "Preprocess stage: normalize text and remove whitelist phrases before querying the tree.";
-    }
-    if (t.startsWith("scan tokenize ")) {
-        QRegularExpression rx("words=([0-9]+).*ngramSize=([0-9]+)");
-        QRegularExpressionMatch m = rx.match(t);
-        if (m.hasMatch()) {
-            int words = m.captured(1).toInt();
-            int n = m.captured(2).toInt();
-            int total = words - n + 1;
-            if (total < 0) total = 0;
-            return QString("Token stage math: words=%1, n=%2, total query n-grams=max(words-n+1,0)=%3.")
-                .arg(words)
-                .arg(n)
-                .arg(total);
-        }
-        return "Token stage: split cleaned query into overlapping n-word windows.";
-    }
-    if (t.startsWith("scan query-ngrams total=")) {
-        return "This is the number of query windows that will be searched against the VP-tree.";
-    }
-    if (t.startsWith("scan step i=") && t.contains("effectiveRadius=")) {
-        QRegularExpression rx("i=([0-9]+).*effectiveRadius=([0-9eE.+-]+)");
-        QRegularExpressionMatch m = rx.match(t);
-        if (m.hasMatch()) {
-            int idx = m.captured(1).toInt();
-            double r = m.captured(2).toDouble();
-            return QString("Step %1: convert normalized strictness to edit-distance radius r=%2 for this n-gram.")
-                .arg(idx)
-                .arg(r, 0, 'f', 2);
-        }
-        return "Per n-gram scan step: compute radius and query the VP-tree.";
-    }
-    if (t.startsWith("scan step i=") && t.contains("rangeResults=")) {
-        QRegularExpression rx("i=([0-9]+).*rangeResults=([0-9]+)");
-        QRegularExpressionMatch m = rx.match(t);
-        if (m.hasMatch()) {
-            return QString("Step %1 result: VP-tree range query returned %2 candidate matches.")
-                .arg(m.captured(1).toInt())
-                .arg(m.captured(2).toInt());
-        }
-        return "Range query result count for this scan step.";
-    }
-    if (t.startsWith("scan step i=") && t.contains("bestDistance=")) {
-        return "Best candidate selected by minimum edit distance; this drives source attribution and segment marking.";
-    }
-    if (t.startsWith("scan summary ")) {
-        QRegularExpression rx("matchedNgrams=([0-9]+).*totalNgrams=([0-9]+).*matchedChars=([0-9]+).*textLen=([0-9]+)");
-        QRegularExpressionMatch m = rx.match(t);
-        if (m.hasMatch()) {
-            int mg = m.captured(1).toInt();
-            int tg = m.captured(2).toInt();
-            int mc = m.captured(3).toInt();
-            int tl = m.captured(4).toInt();
-            double pct = (tl > 0) ? (100.0 * mc / tl) : 0.0;
-            return QString("Summary math: n-gram hits=%1/%2, char hits=%3/%4, plagiarism%%≈%5.")
-                .arg(mg)
-                .arg(tg)
-                .arg(mc)
-                .arg(tl)
-                .arg(pct, 0, 'f', 1);
-        }
-        return "Scan summary combines n-gram and character-level match statistics.";
-    }
-    if (t.startsWith("scan done ")) {
-        return "Scan complete: final percentage and matched source-file count are emitted to the UI.";
-    }
-    if (t == "... trace truncated ...") {
-        return "Trace budget reached. Visualization keeps key steps while avoiding an overwhelming log.";
-    }
-    if (t.startsWith("=== ")) {
-        return "Starting a new data-structure operation phase.";
-    }
-    if (t.startsWith("build_tree(start")) {
-        return "Create phase begins: allocate root recursively using raw pointers and partition by median distance.";
-    }
-    if (t.startsWith("buildRecursive(count=")) {
-        return "Recursive build: choose 1 vantage point, then split remaining elements into inside/outside subsets.";
-    }
-    if (t.startsWith("selected VP:")) {
-        return "Vantage point is selected to maximize distance spread (high variance gives better partitions).";
-    }
-    if (t.startsWith("median distance:")) {
-        return "Math: mu = median_i d(vp, x_i). This threshold drives left/right partitioning.";
-    }
-    if (t.startsWith("partition inside=")) {
-        return "Storage split: left subtree stores {x | d(vp,x) <= mu}, right subtree stores {x | d(vp,x) > mu}.";
-    }
-    if (t.startsWith("leaf node:")) {
-        return "Leaf allocation: node.left = nullptr, node.right = nullptr.";
-    }
-    if (t.startsWith("range_query(start")) {
-        return treeForwarded
-            ? "VP-tree internal call during scan: return all x with d(query,x)<=radius."
-            : "Range query math: return all x satisfying d(query, x) <= radius.";
-    }
-    if (t.startsWith("range visit ")) {
-        QRegularExpression rx("dist=([0-9eE.+-]+).*radius=([0-9eE.+-]+).*mu=([0-9eE.+-]+)");
-        QRegularExpressionMatch m = rx.match(t);
-        if (m.hasMatch()) {
-            double d = m.captured(1).toDouble();
-            double r = m.captured(2).toDouble();
-            double mu = m.captured(3).toDouble();
-            return QString("Math: d=%1, r=%2, mu=%3. Explore left if d-r<=mu (%4<=%5). Explore right if d+r>mu (%6>%7).")
-                .arg(d, 0, 'f', 2)
-                .arg(r, 0, 'f', 2)
-                .arg(mu, 0, 'f', 2)
-                .arg(d - r, 0, 'f', 2)
-                .arg(mu, 0, 'f', 2)
-                .arg(d + r, 0, 'f', 2)
-                .arg(mu, 0, 'f', 2);
-        }
-        return "Range traversal uses pruning inequalities with mu to skip impossible branches.";
-    }
-    if (t == "-> match accepted" || t == "  -> match accepted") {
-        return "A stored n-gram satisfies the distance threshold and is returned as a match.";
-    }
-    if (t.startsWith("search_knn(start")) {
-        return "KNN begins: maintain up to k nearest neighbors and track tau (current worst distance in the top-k set).";
-    }
-    if (t.startsWith("knn visit ")) {
-        QRegularExpression rx("dist=([0-9eE.+-]+).*tau=([0-9eE.+-]+).*mu=([0-9eE.+-]+)");
-        QRegularExpressionMatch m = rx.match(t);
-        if (m.hasMatch()) {
-            double d = m.captured(1).toDouble();
-            double tau = m.captured(2).toDouble();
-            double mu = m.captured(3).toDouble();
-            return QString("Math: d=%1, tau=%2, mu=%3. Branch checks use d-tau<=mu and d+tau>mu.")
-                .arg(d, 0, 'f', 2)
-                .arg(tau, 0, 'f', 2)
-                .arg(mu, 0, 'f', 2);
-        }
-        return "KNN traversal prunes branches using tau to avoid unnecessary comparisons.";
-    }
-    if (t.startsWith("knn insert candidate")) {
-        return "Candidate neighbor inserted, then farthest item may be dropped to keep only k elements.";
-    }
-    if (t.startsWith("removed farthest neighbor")) {
-        return "Top-k maintenance: current farthest neighbor is removed to preserve best k matches.";
-    }
-    if (t.startsWith("tau updated=")) {
-        return "Tau update: tau = max distance among retained k neighbors.";
-    }
-    if (t.startsWith("contains(check")) {
-        return "Read operation: linear scan of stored nodes checks exact NGram identity.";
-    }
-    if (t.startsWith("update(start")) {
-        return "Update operation: locate old record, replace content, then rebuild to preserve VP-tree invariants.";
-    }
-    if (t.startsWith("remove(start")) {
-        return "Delete operation: filter out target element, then rebuild tree to keep partition consistency.";
-    }
-    if (t.startsWith("rebuild(start")) {
-        return "Rebuild operation: collect all nodes, clear pointers, reconstruct balanced metric partitions.";
-    }
-    if (t.startsWith("clear(start")) {
-        return "Clear operation: post-order delete of nodes releases raw-pointer tree memory.";
-    }
-    if (t.startsWith("- vp=\"")) {
-        return "Storage snapshot: each node stores (vantage point text, mu, left pointer, right pointer).";
-    }
-    if (t == "- null") {
-        return "Null child pointer encountered in the current tree snapshot.";
-    }
-    return treeForwarded
-        ? "VP-tree internal event generated while plagiarism pipeline is scanning n-grams."
-        : "Backend trace event for this operation step.";
-}
-// Function: appendTraceStep
-void MainWindow::appendTraceStep(int index) {
-    if (index < 0 || index >= opsTraceLines_.count()) return;
-    opsTraceDisplay_->append(opsTraceLines_[index]);
-    opsExplainDisplay_->setPlainText(opsTraceExplainLines_[index]);
-    opsStepLabel_->setText(
-        QString("Step %1 / %2")
-            .arg(index + 1)
-            .arg(opsTraceLines_.count()));
-    int pct = ((index + 1) * 100) / opsTraceLines_.count();
-    opsTraceProgress_->setValue(pct);
-    QTextCursor cursor = opsTraceDisplay_->textCursor();
-    cursor.movePosition(QTextCursor::End);
-    opsTraceDisplay_->setTextCursor(cursor);
-}
-// Function: startTracePlayback
-void MainWindow::startTracePlayback(const QStringList& lines) {
-    if (!opsPlaybackTimer_) return;
-    if (opsPlaybackTimer_->isActive()) {
-        opsPlaybackTimer_->stop();
-    }
-    opsTraceLines_ = lines;
-    opsTraceExplainLines_.clear();
-    for (int i = 0; i < opsTraceLines_.count(); ++i) {
-        opsTraceExplainLines_.append(explainTraceLine(opsTraceLines_[i]));
-    }
-    opsTraceIndex_ = 0;
-    opsPlaybackPaused_ = false;
-    opsTraceDisplay_->clear();
-    opsExplainDisplay_->clear();
-    opsTraceProgress_->setValue(0);
-    opsStepLabel_->setText(
-        QString("Step 0 / %1").arg(opsTraceLines_.count()));
-    opsPlayPauseBtn_->setText("Pause");
-    if (opsTraceLines_.isEmpty()) return;
-    appendTraceStep(0);
-    opsTraceIndex_ = 1;
-    if (opsTraceIndex_ >= opsTraceLines_.count()) {
-        opsTraceProgress_->setValue(100);
-        statusBar()->showMessage("Backend trace playback complete.", 4000);
-        return;
-    }
-    opsPlaybackTimer_->setInterval(opsSpeedSlider_->value());
-    opsPlaybackTimer_->start();
-}
-// Function: onTracePlaybackTick
-void MainWindow::onTracePlaybackTick() {
-    if (!opsPlaybackTimer_) return;
-    if (opsTraceIndex_ >= opsTraceLines_.count()) {
-        opsPlaybackTimer_->stop();
-        opsPlaybackPaused_ = true;
-        opsPlayPauseBtn_->setText("Replay");
-        opsTraceProgress_->setValue(100);
-        statusBar()->showMessage("Backend trace playback complete.", 4000);
-        return;
-    }
-    appendTraceStep(opsTraceIndex_);
-    ++opsTraceIndex_;
-    if (opsTraceIndex_ >= opsTraceLines_.count()) {
-        opsPlaybackTimer_->stop();
-        opsPlaybackPaused_ = true;
-        opsPlayPauseBtn_->setText("Replay");
-        opsTraceProgress_->setValue(100);
-        statusBar()->showMessage("Backend trace playback complete.", 4000);
-    }
-}
-// Function: onTracePlayPause
-void MainWindow::onTracePlayPause() {
-    if (!opsPlaybackTimer_) return;
-    if (opsTraceLines_.isEmpty()) return;
-    if (opsTraceIndex_ >= opsTraceLines_.count()) {
-        startTracePlayback(opsTraceLines_);
-        return;
-    }
-    if (opsPlaybackTimer_->isActive()) {
-        opsPlaybackTimer_->stop();
-        opsPlaybackPaused_ = true;
-        opsPlayPauseBtn_->setText("Play");
-        statusBar()->showMessage("Backend trace paused.", 2000);
-        return;
-    }
-    opsPlaybackTimer_->setInterval(opsSpeedSlider_->value());
-    opsPlaybackTimer_->start();
-    opsPlaybackPaused_ = false;
-    opsPlayPauseBtn_->setText("Pause");
-}
-// Function: onTraceNextStep
-void MainWindow::onTraceNextStep() {
-    if (opsTraceLines_.isEmpty()) return;
-    if (opsPlaybackTimer_ && opsPlaybackTimer_->isActive()) {
-        opsPlaybackTimer_->stop();
-    }
-    if (opsTraceIndex_ >= opsTraceLines_.count()) {
-        statusBar()->showMessage("Trace is already complete.", 2000);
-        return;
-    }
-    appendTraceStep(opsTraceIndex_);
-    ++opsTraceIndex_;
-    opsPlaybackPaused_ = true;
-    opsPlayPauseBtn_->setText("Play");
-    if (opsTraceIndex_ >= opsTraceLines_.count()) {
-        opsTraceProgress_->setValue(100);
-        opsPlayPauseBtn_->setText("Replay");
-        statusBar()->showMessage("Backend trace playback complete.", 4000);
-    }
-}
-// Function: onTraceSpeedChanged
-void MainWindow::onTraceSpeedChanged(int value) {
-    opsSpeedLabel_->setText(QString("Step delay: %1 ms").arg(value));
-    if (opsPlaybackTimer_) {
-        opsPlaybackTimer_->setInterval(value);
-    }
 }
 // Function: applyHeatmap
 void MainWindow::applyHeatmap(const ScanReport& report) {
@@ -1195,6 +814,56 @@ void MainWindow::applyHeatmap(const ScanReport& report) {
         if (end > textLen) end = textLen;
         for (int c = start; c < end; ++c)
             isMatched[c] = true;
+    }
+
+    // Un-mark characters belonging to whitelist or boilerplate terms
+    // so they are NOT highlighted in the heatmap.
+    {
+        std::string origText = currentQueryText_;
+        std::string lowerQuery;
+        lowerQuery.reserve(origText.size());
+        for (size_t ci = 0; ci < origText.size(); ++ci) {
+            lowerQuery += static_cast<char>(
+                std::tolower(static_cast<unsigned char>(origText[ci])));
+        }
+
+        auto unmarkTerms = [&](const RawBuffer<std::string>& terms) {
+            for (int t = 0; t < terms.count(); ++t) {
+                // Normalize term: lowercase and strip non-alnum.
+                std::string term;
+                const std::string& raw = terms[t];
+                bool lastSpace = false;
+                for (char ch : raw) {
+                    if (std::isalnum(static_cast<unsigned char>(ch))) {
+                        term += static_cast<char>(
+                            std::tolower(static_cast<unsigned char>(ch)));
+                        lastSpace = false;
+                    } else if (!term.empty() && !lastSpace) {
+                        term += ' ';
+                        lastSpace = true;
+                    }
+                }
+                if (!term.empty() && term.back() == ' ') term.pop_back();
+                if (term.empty()) continue;
+
+                size_t p = 0;
+                while ((p = lowerQuery.find(term, p)) != std::string::npos) {
+                    bool leftOk = (p == 0) ||
+                        !std::isalnum(static_cast<unsigned char>(lowerQuery[p - 1]));
+                    size_t ep = p + term.size();
+                    bool rightOk = (ep >= lowerQuery.size()) ||
+                        !std::isalnum(static_cast<unsigned char>(lowerQuery[ep]));
+                    if (leftOk && rightOk) {
+                        for (size_t c = p; c < ep && c < static_cast<size_t>(textLen); ++c)
+                            isMatched[c] = false;
+                    }
+                    ++p;
+                }
+            }
+        };
+
+        unmarkTerms(engine_.whitelist());
+        unmarkTerms(engine_.boilerplate());
     }
     // Build the document with formatting by walking character-by-character,
     // batching consecutive same-state characters for efficiency.

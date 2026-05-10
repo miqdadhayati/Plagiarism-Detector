@@ -3,21 +3,28 @@
 
 # --- Verbs ---
 RESIDE_VB,live,living,residing,dwelling
+MOVE_VB,move,relocate,transfer
+ATTEMPT_VB,try,attempt,endeavor
+PROVIDE_VB,provide,supply,offer
 
 # --- Adjectives ---
 BUSY_ADJ,busy,bustling,active
 SPEED_ADJ,rapid,fast,quick,swift
 CONSTANT_ADJ,constant,continuous,nonstop
 TIRE_ADJ,exhausting,tiring,draining
-ABUNDANT_ADJ,abundant,plentiful,many
+ABUNDANT_ADJ,abundant,plentiful,many,numerous
 DIVERSE_ADJ,diverse,varied,different
 CULTURE_ADJ,cultural,artistic
 ATTRACT_ADJ,attractive,appealing,desirable
 RURAL_ADJ,rural,country,countryside
 PEACE_ADJ,peaceful,tranquil,calm
 FRESH_ADJ,fresh,clean
-STRONG_ADJ,strong,powerful
+STRONG_ADJ,strong,powerful,great
 ADVANCED_ADJ,advanced,modern,developed
+AFFORD_ADJ,affordable,cheaper,inexpensive
+BASIC_ADJ,basic,essential,fundamental
+BIG_ADJ,big,large,bigger,larger
+PRIMARY_ADJ,primary,main,chief
 
 # --- Nouns ---
 CITY_NOUN,city,town,metropolitan,urban,regions
@@ -31,3 +38,9 @@ ENVIRONMENT_NOUN,atmosphere,environment,settings
 AIR_NOUN,air,oxygen
 FEELING_NOUN,sense,feeling
 INFRASTRUCTURE_NOUN,infrastructure,facilities,systems
+TRANSIT_NOUN,transit,transport,transportation
+HOUSING_NOUN,housing,shelter,accommodation
+EXPENSE_NOUN,cost,expense,expenses
+AREA_NOUN,area,areas,districts,neighborhoods
+VEHICLE_NOUN,vehicle,vehicles,cars
+DISTANCE_NOUN,distance,distances,gap

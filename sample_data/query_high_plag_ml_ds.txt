@@ -1,9 +1,0 @@
-This report summarizes two core topics in computing.
-Machine learning is a subset of artificial intelligence that focuses on building systems that learn from data.
-Instead of being explicitly programmed to perform a task, these systems use algorithms to parse data, learn from it, and then make predictions or decisions.
-The key advantage of machine learning is its ability to improve performance over time as more data becomes available.
-
-Data structures are fundamental building blocks in computer science.
-They provide organized ways to store and manage data efficiently.
-Common data structures include arrays, linked lists, trees, and hash tables.
-Understanding when to use each data structure is a critical skill for software engineers and directly impacts the performance and scalability of applications.
