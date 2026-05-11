@@ -133,9 +133,8 @@ template <> constexpr inline auto MainWindow::qt_create_metaobjectdata<qt_meta_t
         "onRemoveDatabaseFile",
         "onScanFile",
         "onLoadQuickDemo",
-        "onVisualizeOperationsDemo",
-        "onAddBoilerplatePhrase",
-        "onRemoveBoilerplatePhrase",
+        "onLoadSynonymDemo",
+        "onAutoDetectBoilerplate",
         "onAddWhitelistWord",
         "onRemoveWhitelistWord",
         "onStrictnessChanged",
@@ -143,11 +142,7 @@ template <> constexpr inline auto MainWindow::qt_create_metaobjectdata<qt_meta_t
         "onScanFinished",
         "ScanReport",
         "report",
-        "onRescan",
-        "onTracePlaybackTick",
-        "onTracePlayPause",
-        "onTraceNextStep",
-        "onTraceSpeedChanged"
+        "onRescan"
     };
 
     QtMocHelpers::UintData qt_methods {
@@ -159,36 +154,24 @@ template <> constexpr inline auto MainWindow::qt_create_metaobjectdata<qt_meta_t
         QtMocHelpers::SlotData<void()>(4, 2, QMC::AccessPrivate, QMetaType::Void),
         // Slot 'onLoadQuickDemo'
         QtMocHelpers::SlotData<void()>(5, 2, QMC::AccessPrivate, QMetaType::Void),
-        // Slot 'onVisualizeOperationsDemo'
+        // Slot 'onLoadSynonymDemo'
         QtMocHelpers::SlotData<void()>(6, 2, QMC::AccessPrivate, QMetaType::Void),
-        // Slot 'onAddBoilerplatePhrase'
+        // Slot 'onAutoDetectBoilerplate'
         QtMocHelpers::SlotData<void()>(7, 2, QMC::AccessPrivate, QMetaType::Void),
-        // Slot 'onRemoveBoilerplatePhrase'
-        QtMocHelpers::SlotData<void()>(8, 2, QMC::AccessPrivate, QMetaType::Void),
         // Slot 'onAddWhitelistWord'
-        QtMocHelpers::SlotData<void()>(9, 2, QMC::AccessPrivate, QMetaType::Void),
+        QtMocHelpers::SlotData<void()>(8, 2, QMC::AccessPrivate, QMetaType::Void),
         // Slot 'onRemoveWhitelistWord'
-        QtMocHelpers::SlotData<void()>(10, 2, QMC::AccessPrivate, QMetaType::Void),
+        QtMocHelpers::SlotData<void()>(9, 2, QMC::AccessPrivate, QMetaType::Void),
         // Slot 'onStrictnessChanged'
-        QtMocHelpers::SlotData<void(int)>(11, 2, QMC::AccessPrivate, QMetaType::Void, {{
-            { QMetaType::Int, 12 },
+        QtMocHelpers::SlotData<void(int)>(10, 2, QMC::AccessPrivate, QMetaType::Void, {{
+            { QMetaType::Int, 11 },
         }}),
         // Slot 'onScanFinished'
-        QtMocHelpers::SlotData<void(ScanReport)>(13, 2, QMC::AccessPrivate, QMetaType::Void, {{
-            { 0x80000000 | 14, 15 },
+        QtMocHelpers::SlotData<void(ScanReport)>(12, 2, QMC::AccessPrivate, QMetaType::Void, {{
+            { 0x80000000 | 13, 14 },
         }}),
         // Slot 'onRescan'
-        QtMocHelpers::SlotData<void()>(16, 2, QMC::AccessPrivate, QMetaType::Void),
-        // Slot 'onTracePlaybackTick'
-        QtMocHelpers::SlotData<void()>(17, 2, QMC::AccessPrivate, QMetaType::Void),
-        // Slot 'onTracePlayPause'
-        QtMocHelpers::SlotData<void()>(18, 2, QMC::AccessPrivate, QMetaType::Void),
-        // Slot 'onTraceNextStep'
-        QtMocHelpers::SlotData<void()>(19, 2, QMC::AccessPrivate, QMetaType::Void),
-        // Slot 'onTraceSpeedChanged'
-        QtMocHelpers::SlotData<void(int)>(20, 2, QMC::AccessPrivate, QMetaType::Void, {{
-            { QMetaType::Int, 12 },
-        }}),
+        QtMocHelpers::SlotData<void()>(15, 2, QMC::AccessPrivate, QMetaType::Void),
     };
     QtMocHelpers::UintData qt_properties {
     };
@@ -216,18 +199,13 @@ void MainWindow::qt_static_metacall(QObject *_o, QMetaObject::Call _c, int _id, 
         case 1: _t->onRemoveDatabaseFile(); break;
         case 2: _t->onScanFile(); break;
         case 3: _t->onLoadQuickDemo(); break;
-        case 4: _t->onVisualizeOperationsDemo(); break;
-        case 5: _t->onAddBoilerplatePhrase(); break;
-        case 6: _t->onRemoveBoilerplatePhrase(); break;
-        case 7: _t->onAddWhitelistWord(); break;
-        case 8: _t->onRemoveWhitelistWord(); break;
-        case 9: _t->onStrictnessChanged((*reinterpret_cast<std::add_pointer_t<int>>(_a[1]))); break;
-        case 10: _t->onScanFinished((*reinterpret_cast<std::add_pointer_t<ScanReport>>(_a[1]))); break;
-        case 11: _t->onRescan(); break;
-        case 12: _t->onTracePlaybackTick(); break;
-        case 13: _t->onTracePlayPause(); break;
-        case 14: _t->onTraceNextStep(); break;
-        case 15: _t->onTraceSpeedChanged((*reinterpret_cast<std::add_pointer_t<int>>(_a[1]))); break;
+        case 4: _t->onLoadSynonymDemo(); break;
+        case 5: _t->onAutoDetectBoilerplate(); break;
+        case 6: _t->onAddWhitelistWord(); break;
+        case 7: _t->onRemoveWhitelistWord(); break;
+        case 8: _t->onStrictnessChanged((*reinterpret_cast<std::add_pointer_t<int>>(_a[1]))); break;
+        case 9: _t->onScanFinished((*reinterpret_cast<std::add_pointer_t<ScanReport>>(_a[1]))); break;
+        case 10: _t->onRescan(); break;
         default: ;
         }
     }
@@ -252,14 +230,14 @@ int MainWindow::qt_metacall(QMetaObject::Call _c, int _id, void **_a)
     if (_id < 0)
         return _id;
     if (_c == QMetaObject::InvokeMetaMethod) {
-        if (_id < 16)
+        if (_id < 11)
             qt_static_metacall(this, _c, _id, _a);
-        _id -= 16;
+        _id -= 11;
     }
     if (_c == QMetaObject::RegisterMethodArgumentMetaType) {
-        if (_id < 16)
+        if (_id < 11)
             *reinterpret_cast<QMetaType *>(_a[0]) = QMetaType();
-        _id -= 16;
+        _id -= 11;
     }
     return _id;
 }

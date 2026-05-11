@@ -6,6 +6,71 @@
 #include <cstring>
 #include <set>
 #include <map>
+#include <vector>
+#include <unordered_set>
+
+namespace {
+
+// Function: findWordBoundaries
+// Walks `text` the way tokenize() splits — on ' ' delimiters, dropping empty
+// runs — but records the byte offsets of each word BEFORE any synonym
+// substitution is applied. The returned starts[i] is the position of the
+// first character of word i; ends[i] is one past the last character.
+//
+// Why this exists:  tokenize() applies applySynonyms() to each token before
+// appending it, so the post-synonym word strings stored in the returned
+// RawBuffer no longer have the same lengths as the regions they came from
+// in `text`. Any code that needs to translate a (word_index, ngram_size)
+// pair back into a character span in `text` must use these PRE-synonym
+// offsets, not the post-synonym string lengths.
+//
+// Postcondition: starts.size() == ends.size() == tokenize(text).count().
+void findWordBoundaries(const std::string& text,
+                        std::vector<int>& starts,
+                        std::vector<int>& ends) {
+    starts.clear();
+    ends.clear();
+    int wordStart = -1;
+    int len = static_cast<int>(text.size());
+    for (int i = 0; i <= len; ++i) {
+        if (i == len || text[i] == ' ') {
+            if (wordStart >= 0) {
+                starts.push_back(wordStart);
+                ends.push_back(i);
+                wordStart = -1;
+            }
+        } else {
+            if (wordStart < 0) wordStart = i;
+        }
+    }
+}
+
+// Function: tokenizeNoSynonym
+// Pure whitespace tokenizer with NO synonym substitution. Used by
+// detectBoilerplate() so the phrases stored in boilerplate_ match the
+// pre-synonym surface forms that applyBoilerplate() later searches for.
+// (PlagiarismEngine::tokenize() applies synonyms inline; using it here
+// would store "QUICK_ADV brown fox" as boilerplate, which after
+// normalizeText() collapses to "quickadv brown fox" and never matches
+// anything in the input pipeline because the input never sees the
+// synonym substitution before applyBoilerplate runs.)
+std::vector<std::string> tokenizeNoSynonym(const std::string& text) {
+    std::vector<std::string> out;
+    std::string word;
+    for (size_t i = 0; i <= text.size(); ++i) {
+        if (i == text.size() || text[i] == ' ') {
+            if (!word.empty()) {
+                out.push_back(word);
+                word.clear();
+            }
+        } else {
+            word += text[i];
+        }
+    }
+    return out;
+}
+
+} // anonymous namespace
 
 // Function: emitTrace
 void PlagiarismEngine::emitTrace(const std::string& message) const {
@@ -234,6 +299,13 @@ bool PlagiarismEngine::loadSynonymDictionary(const std::string& filePath) {
 }
 
 // Function: createNgrams
+//
+// FIX: word-boundary table is now derived from the PRE-synonym cleanedText
+// via findWordBoundaries(), not from the lengths of the post-synonym word
+// strings produced by tokenize(). The old code summed post-synonym word
+// sizes, so whenever a synonym substitution changed a word's length
+// (e.g. "fast" -> "QUICK_ADV") all subsequent cleanStart/cleanEnd values
+// pointed past the actual text and mapPositions() returned garbage offsets.
 RawBuffer<NGram> PlagiarismEngine::createNgrams(
     const std::string& originalText,
     const std::string& cleanedText,
@@ -249,14 +321,24 @@ RawBuffer<NGram> PlagiarismEngine::createNgrams(
         }
         return ngrams;
     }
-    // Build a position map: for each word index, find its start in cleanedText
-    int* wordStarts = new int[words.count()];
-    int pos = 0;
-    for (int i = 0; i < words.count(); ++i) {
-        wordStarts[i] = pos;
-        pos += static_cast<int>(words[i].size()) + 1; // +1 for space
+
+    // Build a position map keyed off the PRE-synonym text. wordStarts[i]
+    // is the offset of word i in cleanedText; wordEnds[i] is one past
+    // its last character.
+    std::vector<int> wordStarts, wordEnds;
+    findWordBoundaries(cleanedText, wordStarts, wordEnds);
+
+    // Sanity check: tokenize() and findWordBoundaries() must agree on the
+    // word count because they apply the same split rule. A mismatch would
+    // indicate the synonym pipeline silently dropped or inserted tokens.
+    int wordCount = words.count();
+    if (static_cast<int>(wordStarts.size()) < wordCount) {
+        // Defensive: degrade gracefully rather than scribble past the
+        // boundary table. We just bail out without creating ngrams.
+        return ngrams;
     }
-    for (int i = 0; i <= words.count() - ngramSize_; ++i) {
+
+    for (int i = 0; i <= wordCount - ngramSize_; ++i) {
         std::string ngramText;
         for (int j = 0; j < ngramSize_; ++j) {
             if (j > 0) ngramText += ' ';
@@ -264,26 +346,27 @@ RawBuffer<NGram> PlagiarismEngine::createNgrams(
         }
         int cleanStart = wordStarts[i];
         int lastWordIdx = i + ngramSize_ - 1;
-        int cleanEnd = wordStarts[lastWordIdx]
-                       + static_cast<int>(words[lastWordIdx].size());
+        int cleanEnd = wordEnds[lastWordIdx];
         int origStart = 0, origEnd = static_cast<int>(originalText.size());
         mapPositions(originalText, cleanedText,
                      cleanStart, cleanEnd, origStart, origEnd);
         ngrams.append(NGram(ngramText, sourceFile, origStart, origEnd, i));
     }
-    delete[] wordStarts;
     return ngrams;
 }
 
 // Function: mapPositions
+//
+// Ratio-based mapping from cleaned-text offsets back into the original raw
+// text, with both endpoints snapped outward to the nearest whitespace so
+// the resulting span always aligns to whole words. Because we snap to
+// space characters (0x20, single byte in UTF-8), the returned offsets are
+// always safe positions for std::string::substr regardless of multi-byte
+// content elsewhere.
 void PlagiarismEngine::mapPositions(const std::string& original,
                                      const std::string& cleaned,
                                      int cleanStart, int cleanEnd,
                                      int& origStart, int& origEnd) {
-    // Build a mapping from cleaned-text indices to original-text indices.
-    // We walk both strings in parallel to establish correspondence.
-    std::string normOrig = normalizeText(original);
-    // Simple heuristic: use ratio-based mapping
     double ratio = (cleaned.empty()) ? 0.0
         : static_cast<double>(original.size()) / cleaned.size();
     origStart = static_cast<int>(cleanStart * ratio);
@@ -343,10 +426,56 @@ void PlagiarismEngine::setBoilerplateThreshold(double t) {
 }
 
 // Function: detectBoilerplate
-// Scans all indexed files and auto-detects phrases (n-grams) that appear in
-// >= boilerplateThreshold_ fraction of documents. These common phrases are
-// typically organizational headers, question formats, etc. that should not
-// be flagged as plagiarism.
+//
+// Auto-detects phrases that appear in >= boilerplateThreshold_ fraction of
+// indexed documents. These shared phrases (cover pages, question prompts,
+// instructor disclaimers) are filtered out before similarity scoring so
+// they don't inflate the plagiarism percentage.
+//
+// Algorithm: SEED + GREEDY EXTEND, in three phases.
+//
+//   PHASE 1 - SEED DETECTION.
+//     Brute-force enumerate every contiguous word window of length
+//     [SEED_MIN .. SEED_MAX] in every document, de-duplicating within each
+//     document. Any phrase appearing in >= minDocs distinct documents is a
+//     seed candidate. We also remember one (doc, position) anchor per
+//     phrase for the extension phase.
+//
+//   PHASE 2 - GREEDY EXTENSION.
+//     The previous revision only looked at windows of length 3-5, so any
+//     common header longer than five words got reported as a handful of
+//     overlapping five-word slices instead of one coherent phrase (the
+//     bug visible in the screenshot of the demo dataset, whose shared
+//     header normalises to ~22 words).
+//
+//     Now: starting from the anchor of each seed, we grow the phrase one
+//     word at a time, alternately right then left, accepting each
+//     extension as long as the extended sequence still occurs in >=
+//     minDocs documents. The maximal common phrase is whatever survives
+//     when both directions have been driven to failure. This works for
+//     headers of arbitrary length and degrades to "no extension" when the
+//     seed is already maximal.
+//
+//   PHASE 3 - SUBSUMPTION DEDUP (word-boundary aware).
+//     After extension, many seeds collapse to identical maximal phrases.
+//     The std::set in phase 2 takes care of exact duplicates. What's left
+//     are distinct maximal phrases that may still share a head or tail
+//     with each other; we drop any phrase whose entire word-sequence
+//     appears inside a longer kept phrase. The check is word-boundary
+//     aware (not raw char-level find), so "the cat" is correctly NOT
+//     considered subsumed by "the cats sat" even though strstr would
+//     match.
+//
+// Performance: extension calls countDocsWithSequence() repeatedly. Each
+// call is sped up with a per-doc word->positions index, so the seek loop
+// only visits positions where the first word of the sequence actually
+// matches, instead of every position in the document. For typical
+// academic datasets (10-50 docs of 1-3K words each) the whole pass
+// finishes well under a second.
+//
+// Note: still uses tokenizeNoSynonym (no synonym substitution) so the
+// phrases stored in boilerplate_ match the pre-synonym surface forms
+// that applyBoilerplate() -> removeTermsStrict() later searches for.
 int PlagiarismEngine::detectBoilerplate() {
     boilerplate_.clear();
 
@@ -355,62 +484,198 @@ int PlagiarismEngine::detectBoilerplate() {
         return 0;
     }
 
-    // Read and normalize each file's content.
-    RawBuffer<std::string> normalizedContents;
+    // Read, normalise, and tokenise each file once up-front. We hold both
+    // the per-doc word vector (used everywhere downstream) and a per-doc
+    // word->positions index (used to make extension cheap).
+    std::vector<std::vector<std::string>> docWords;
+    std::vector<std::unordered_map<std::string, std::vector<int>>> wordPositions;
+    docWords.reserve(indexedFiles_.count());
+    wordPositions.reserve(indexedFiles_.count());
+
     for (int i = 0; i < indexedFiles_.count(); ++i) {
         std::string raw = readFile(indexedFiles_[i].fullPath);
         std::string norm = normalizeText(raw);
-        normalizedContents.append(norm);
+        std::vector<std::string> words = tokenizeNoSynonym(norm);
+
+        std::unordered_map<std::string, std::vector<int>> idx;
+        for (int p = 0; p < static_cast<int>(words.size()); ++p) {
+            idx[words[p]].push_back(p);
+        }
+
+        docWords.push_back(std::move(words));
+        wordPositions.push_back(std::move(idx));
     }
 
-    int numDocs = normalizedContents.count();
+    int numDocs = static_cast<int>(docWords.size());
     int minDocs = static_cast<int>(numDocs * boilerplateThreshold_);
     if (minDocs < 2) minDocs = 2;
 
-    // Use a small sliding window (3 words) to find common phrases.
-    // Count how many distinct documents contain each phrase.
-    std::map<std::string, int> phraseCounts;
+    // ----------------------------------------------------------------
+    // Helper: does `seq` appear as a contiguous word sequence in at
+    // least `needed` documents? Returns the actual hit count so callers
+    // can both verify and emit diagnostics.
+    //
+    // Uses the per-doc word position index to jump straight to positions
+    // where the first word matches, instead of scanning every offset.
+    // ----------------------------------------------------------------
+    auto countDocsWithSequence =
+        [&](const std::vector<std::string>& seq) -> int {
+        if (seq.empty()) return 0;
+        int plen = static_cast<int>(seq.size());
+        int hits = 0;
+        for (int d = 0; d < numDocs; ++d) {
+            const auto& w = docWords[d];
+            int wc = static_cast<int>(w.size());
+            auto it = wordPositions[d].find(seq[0]);
+            if (it == wordPositions[d].end()) continue;
+            bool found = false;
+            for (int pos : it->second) {
+                if (pos + plen > wc) continue;
+                bool match = true;
+                for (int j = 1; j < plen; ++j) {
+                    if (w[pos + j] != seq[j]) { match = false; break; }
+                }
+                if (match) { found = true; break; }
+            }
+            if (found) ++hits;
+        }
+        return hits;
+    };
+
+    // ----------------------------------------------------------------
+    // Phase 1: seed detection.
+    // ----------------------------------------------------------------
+    // SEED_MIN of 3 keeps trivial bigrams ("of the", "in a") out of the
+    // boilerplate list. SEED_MAX of 25 is large enough to catch most
+    // realistic cover pages in one pass; anything longer is handled by
+    // phase 2.
+    const int SEED_MIN = 3;
+    const int SEED_MAX = 25;
+
+    struct SeedInfo {
+        int count;      // # of distinct docs containing this seed
+        int anchorDoc;  // document index of one occurrence
+        int anchorPos;  // word offset of that occurrence
+        int wordCount;  // number of words in the seed
+    };
+    std::unordered_map<std::string, SeedInfo> seeds;
 
     for (int d = 0; d < numDocs; ++d) {
-        RawBuffer<std::string> words = tokenize(normalizedContents[d]);
-        std::set<std::string> seenInDoc;  // de-duplicate within one doc
+        const auto& w = docWords[d];
+        int wc = static_cast<int>(w.size());
+        std::unordered_set<std::string> seenInDoc;
+        int maxWs = std::min(SEED_MAX, wc);
 
-        for (int windowSize = 3; windowSize <= 5; ++windowSize) {
-            for (int i = 0; i <= words.count() - windowSize; ++i) {
+        for (int ws = SEED_MIN; ws <= maxWs; ++ws) {
+            for (int i = 0; i + ws <= wc; ++i) {
                 std::string phrase;
-                for (int j = 0; j < windowSize; ++j) {
-                    if (j > 0) phrase += ' ';
-                    phrase += words[i + j];
+                phrase.reserve(static_cast<size_t>(ws) * 8);
+                phrase += w[i];
+                for (int j = 1; j < ws; ++j) {
+                    phrase += ' ';
+                    phrase += w[i + j];
                 }
-                if (seenInDoc.find(phrase) == seenInDoc.end()) {
-                    seenInDoc.insert(phrase);
-                    phraseCounts[phrase]++;
+                if (!seenInDoc.insert(phrase).second) continue;
+                auto it = seeds.find(phrase);
+                if (it == seeds.end()) {
+                    seeds.emplace(phrase, SeedInfo{1, d, i, ws});
+                } else {
+                    ++it->second.count;
                 }
             }
         }
     }
 
-    // Collect phrases meeting the threshold.
-    // Also filter out sub-phrases if a longer phrase covers them.
-    std::vector<std::string> candidates;
-    for (auto& kv : phraseCounts) {
-        if (kv.second >= minDocs) {
-            candidates.push_back(kv.first);
+    // ----------------------------------------------------------------
+    // Phase 2: greedy extension.
+    // ----------------------------------------------------------------
+    // For each seed meeting the threshold, walk outward from its anchor
+    // until further extension drops below minDocs. Multiple seeds anchor
+    // at different positions in the same maximal phrase but converge to
+    // the same final string; the std::set absorbs the duplicates.
+    std::set<std::string> maximalPhrases;
+
+    for (const auto& kv : seeds) {
+        if (kv.second.count < minDocs) continue;
+
+        int d   = kv.second.anchorDoc;
+        int pos = kv.second.anchorPos;
+        int sw  = kv.second.wordCount;
+        const auto& w = docWords[d];
+        int wc = static_cast<int>(w.size());
+
+        int leftEnd  = pos;        // inclusive
+        int rightEnd = pos + sw;   // exclusive
+
+        // Right extension.
+        while (rightEnd < wc) {
+            std::vector<std::string> ext(w.begin() + leftEnd,
+                                          w.begin() + rightEnd + 1);
+            if (countDocsWithSequence(ext) >= minDocs) {
+                ++rightEnd;
+            } else {
+                break;
+            }
         }
+
+        // Left extension.
+        while (leftEnd > 0) {
+            std::vector<std::string> ext(w.begin() + leftEnd - 1,
+                                          w.begin() + rightEnd);
+            if (countDocsWithSequence(ext) >= minDocs) {
+                --leftEnd;
+            } else {
+                break;
+            }
+        }
+
+        std::string maximal;
+        for (int i = leftEnd; i < rightEnd; ++i) {
+            if (i > leftEnd) maximal += ' ';
+            maximal += w[i];
+        }
+        maximalPhrases.insert(maximal);
     }
 
-    // Sort by length descending so longer phrases come first.
-    std::sort(candidates.begin(), candidates.end(),
+    // ----------------------------------------------------------------
+    // Phase 3: subsumption dedup (word-boundary aware).
+    // ----------------------------------------------------------------
+    // Char-level find() would treat "the cat" as subsumed by "the cats
+    // sat", which is wrong; we explicitly require space-or-end on both
+    // sides of every candidate match.
+    auto isWordSubstring =
+        [](const std::string& haystack, const std::string& needle) -> bool {
+        if (needle.empty()) return true;
+        if (needle.size() > haystack.size()) return false;
+        size_t p = 0;
+        while ((p = haystack.find(needle, p)) != std::string::npos) {
+            bool leftOk  = (p == 0)
+                || (haystack[p - 1] == ' ');
+            size_t ep    = p + needle.size();
+            bool rightOk = (ep == haystack.size())
+                || (haystack[ep] == ' ');
+            if (leftOk && rightOk) return true;
+            ++p;
+        }
+        return false;
+    };
+
+    std::vector<std::string> phraseList(maximalPhrases.begin(),
+                                         maximalPhrases.end());
+    // Sort longest-first so the first kept phrase is the most general,
+    // and every later candidate is checked only against shorter-or-equal
+    // already-kept entries (the natural domination order).
+    std::sort(phraseList.begin(), phraseList.end(),
               [](const std::string& a, const std::string& b) {
-                  return a.size() > b.size();
+                  if (a.size() != b.size()) return a.size() > b.size();
+                  return a < b;  // tie-break lexicographically for stable output
               });
 
-    // Remove sub-phrases that are fully contained in a longer already-added phrase.
     std::vector<std::string> filtered;
-    for (const auto& cand : candidates) {
+    for (const auto& cand : phraseList) {
         bool subsumed = false;
         for (const auto& existing : filtered) {
-            if (existing.find(cand) != std::string::npos) {
+            if (isWordSubstring(existing, cand)) {
                 subsumed = true;
                 break;
             }
@@ -577,6 +842,22 @@ void PlagiarismEngine::removeFile(int index) {
             + " treeHeight=" + std::to_string(VPTree::get_height(tree_.root())));
 }
 // Function: scan
+//
+// FIXES (versus the previous revision):
+//   * The decision to install a tree-level trace callback is captured once at
+//     entry into `wasTracingTree` and used at exit too, so the callback is
+//     always cleared even if traceDataStructure_ flips mid-scan. Without
+//     this, the callback would persist on tree_ holding dangling stack
+//     references (treeTraceBudget / treeTraceTruncated) for any subsequent
+//     query that runs while the flag is off.
+//   * `wordStarts` and `matched` are now std::vector<int> / std::vector<bool>
+//     instead of raw new[] arrays. If any append() inside the per-ngram loop
+//     throws, the vectors clean themselves up; the old `new[]` blocks leaked.
+//   * `wordStarts` is computed from PRE-synonym word boundaries via
+//     findWordBoundaries(). The old code summed post-synonym word lengths
+//     which produced wrong cleanStart/cleanEnd values whenever a synonym
+//     substitution changed a word's length, and that error then propagated
+//     through mapPositions() into highlight offsets.
 ScanReport PlagiarismEngine::scan(const std::string& queryText,
                                    const std::string& queryFilename,
                                    double radius) const {
@@ -602,9 +883,14 @@ ScanReport PlagiarismEngine::scan(const std::string& queryText,
     }
     int totalQueryNgrams = words.count() - ngramSize_ + 1;
     emitTrace("scan query-ngrams total=" + std::to_string(totalQueryNgrams));
+
+    // Snapshot the tracing flag at function entry. Tree callback installation
+    // and teardown both key off this local so a concurrent setter cannot
+    // leave a dangling lambda holding references to the local budget vars.
+    bool wasTracingTree = traceDataStructure_;
     int treeTraceBudget = 180;
     bool treeTraceTruncated = false;
-    if (traceDataStructure_) {
+    if (wasTracingTree) {
         tree_.setTraceCallback([this, &treeTraceBudget, &treeTraceTruncated](const std::string& msg) {
             if (treeTraceBudget > 0) {
                 emitTrace("tree " + msg);
@@ -615,16 +901,22 @@ ScanReport PlagiarismEngine::scan(const std::string& queryText,
             }
         });
     }
-    int* wordStarts = new int[words.count()];
-    int pos = 0;
-    for (int i = 0; i < words.count(); ++i) {
-        wordStarts[i] = pos;
-        pos += static_cast<int>(words[i].size()) + 1;
+
+    // PRE-synonym word boundaries in `cleaned`. These align to the same
+    // word count as `words` because tokenize() and findWordBoundaries()
+    // share the same split rule.
+    std::vector<int> wordStarts, wordEnds;
+    findWordBoundaries(cleaned, wordStarts, wordEnds);
+    if (static_cast<int>(wordStarts.size()) < words.count()) {
+        // Defensive bail-out; clear the tree callback first so we don't leave
+        // a dangling capture behind.
+        if (wasTracingTree) tree_.clearTraceCallback();
+        return report;
     }
+
     int textLen = static_cast<int>(queryText.size());
-    bool* matched = new bool[textLen];
-    for (int i = 0; i < textLen; ++i)
-        matched[i] = false;
+    std::vector<bool> matched(textLen, false);
+
     // For each n-gram, do range query
     int totalNgrams   = 0;
     int matchedNgrams = 0;
@@ -669,8 +961,7 @@ ScanReport PlagiarismEngine::scan(const std::string& queryText,
             }
             int cleanStart = wordStarts[i];
             int lastWordIdx = i + ngramSize_ - 1;
-            int cleanEnd = wordStarts[lastWordIdx]
-                           + static_cast<int>(words[lastWordIdx].size());
+            int cleanEnd = wordEnds[lastWordIdx];
             int origStart = 0, origEnd = textLen;
             mapPositions(queryText, cleaned, cleanStart, cleanEnd,
                          origStart, origEnd);
@@ -706,8 +997,8 @@ ScanReport PlagiarismEngine::scan(const std::string& queryText,
     // Un-mark characters in the original query text that belong to
     // whitelist or boilerplate terms. Without this, the ratio-based
     // position mapping inflates matched ranges when filter words are
-    // removed (cleaned text is shorter → ratio is larger → mapped
-    // ranges cover more characters → percentage goes UP instead of DOWN).
+    // removed (cleaned text is shorter -> ratio is larger -> mapped
+    // ranges cover more characters -> percentage goes UP instead of DOWN).
     {
         // Build a lowercase copy of the original for case-insensitive matching.
         std::string lowerQuery;
@@ -755,15 +1046,19 @@ ScanReport PlagiarismEngine::scan(const std::string& queryText,
             + " textLen=" + std::to_string(textLen));
     emitTrace("scan done matchPercentage=" + std::to_string(report.matchPercentage)
             + " matchedFiles=" + std::to_string(report.matchedFiles.count()));
-    if (traceDataStructure_) {
+
+    // Use the SAME local snapshot we used at entry so the teardown branch
+    // is paired with the setup branch regardless of any mid-scan flag flip.
+    if (wasTracingTree) {
         tree_.clearTraceCallback();
     }
-    delete[] wordStarts;
-    delete[] matched;
     return report;
 }
 
 // Function: rankSources
+//
+// Same offset/leak fixes as scan(): PRE-synonym word boundaries from
+// findWordBoundaries(), std::vector for the boundary table, no raw new[].
 RawBuffer<SourceScore> PlagiarismEngine::rankSources(
     const std::string& queryText,
     const std::string& queryFilename,
@@ -786,12 +1081,13 @@ RawBuffer<SourceScore> PlagiarismEngine::rankSources(
         return scores;
     }
     int totalQueryNgrams = words.count() - ngramSize_ + 1;
-    int* wordStarts = new int[words.count()];
-    int pos = 0;
-    for (int i = 0; i < words.count(); ++i) {
-        wordStarts[i] = pos;
-        pos += static_cast<int>(words[i].size()) + 1;
+
+    std::vector<int> wordStarts, wordEnds;
+    findWordBoundaries(cleaned, wordStarts, wordEnds);
+    if (static_cast<int>(wordStarts.size()) < words.count()) {
+        return scores;
     }
+
     RawBuffer<double> simSums;
     for (int i = 0; i <= words.count() - ngramSize_; ++i) {
         std::string ngramText;
@@ -865,7 +1161,6 @@ RawBuffer<SourceScore> PlagiarismEngine::rankSources(
     }
     emitTrace("rankSources done sources=" + std::to_string(scores.count())
             + " totalQueryNgrams=" + std::to_string(totalQueryNgrams));
-    delete[] wordStarts;
     return scores;
 }
 // Function: setPipelineTraceCallback

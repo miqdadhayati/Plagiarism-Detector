@@ -20,6 +20,7 @@
 #include <QMenuBar>
 #include <QToolBar>
 #include <cctype>
+#include <vector>
 
 namespace {
 // Function: findSampleFilePath
@@ -109,14 +110,23 @@ MainWindow::MainWindow(QWidget* parent)
     updateTreeStats();
     setWindowTitle("VP-Tree Plagiarism Detector");
     resize(1280, 800);
-    statusBar()->showMessage("Ready — Add database files and scan a document.");
+    statusBar()->showMessage("Ready - Add database files and scan a document.");
 }
 // Function: ~MainWindow
+// Drains any in-flight scan before destruction. This is the one place we
+// deliberately accept a synchronous wait() on the GUI thread because the
+// app is shutting down and there are no further user interactions to
+// service. We also explicitly disconnect any signals from the worker so
+// that a slot doesn't fire on a half-destructed MainWindow.
 MainWindow::~MainWindow() {
-    if (scanWorker_ && scanWorker_->isRunning()) {
-        scanWorker_->wait();
+    if (scanWorker_) {
+        scanWorker_->disconnect();
+        if (scanWorker_->isRunning()) {
+            scanWorker_->wait();
+        }
+        delete scanWorker_;
+        scanWorker_ = nullptr;
     }
-    delete scanWorker_;
 }
 // Function: setupUI
 void MainWindow::setupUI() {
@@ -273,7 +283,7 @@ void MainWindow::setupUI() {
     dbLayout->addWidget(databaseList_);
     QHBoxLayout* dbBtnLayout = new QHBoxLayout();
     addFileBtn_    = new QPushButton("+ Add File");
-    removeFileBtn_ = new QPushButton("− Remove");
+    removeFileBtn_ = new QPushButton("- Remove");
     dbBtnLayout->addWidget(addFileBtn_);
     dbBtnLayout->addWidget(removeFileBtn_);
     dbLayout->addLayout(dbBtnLayout);
@@ -414,7 +424,17 @@ void MainWindow::setupConnections() {
             this,               &MainWindow::onStrictnessChanged);
 }
 // Function: onAddDatabaseFile
+//
+// Mutates engine_.tree_ via addFile(). If the scan worker is still running
+// (which reads tree_ concurrently from scan()), letting this proceed would
+// produce a use-after-free when build_tree() deletes the nodes the worker
+// is traversing. Hence the isBusy() guard.
 void MainWindow::onAddDatabaseFile() {
+    if (isBusy()) {
+        statusBar()->showMessage(
+            "Wait for current scan to finish before adding files.", 3000);
+        return;
+    }
     QStringList files = QFileDialog::getOpenFileNames(
         this, "Select Database Files", QString(),
         "Text Files (*.txt);;All Files (*)");
@@ -433,7 +453,14 @@ void MainWindow::onAddDatabaseFile() {
         5000);
 }
 // Function: onRemoveDatabaseFile
+// Same use-after-free hazard as onAddDatabaseFile (removeFile rebuilds the
+// tree from scratch), so it gets the same isBusy() guard.
 void MainWindow::onRemoveDatabaseFile() {
+    if (isBusy()) {
+        statusBar()->showMessage(
+            "Wait for current scan to finish before removing files.", 3000);
+        return;
+    }
     int row = databaseList_->currentRow();
     if (row < 0) return;
     engine_.removeFile(row);
@@ -442,7 +469,20 @@ void MainWindow::onRemoveDatabaseFile() {
     statusBar()->showMessage("File removed, tree rebuilt.", 3000);
 }
 // Function: onScanFile
+//
+// FIX: this used to call scanWorker_->wait() on the GUI thread, which froze
+// the UI for the duration of any in-flight scan. Now we refuse the new
+// request if a scan is still running, and only delete the previous worker
+// when it is provably idle (isRunning() == false). The previously emitted
+// scanComplete signal was queued by Qt so deleting the QThread object
+// after the slot has been invoked is safe even though the report payload
+// originated there - it was passed by value through the queued connection.
 void MainWindow::onScanFile() {
+    if (isBusy()) {
+        statusBar()->showMessage(
+            "Scan already in progress. Please wait for it to finish.", 3000);
+        return;
+    }
     QString file = QFileDialog::getOpenFileName(
         this, "Select Document to Scan", QString(),
         "Text Files (*.txt);;All Files (*)");
@@ -470,9 +510,12 @@ void MainWindow::onScanFile() {
     lastScanRadius_ = radius;
     progressBar_->setVisible(true);
     scanBtn_->setEnabled(false);
+    // Safe to delete a worker that has finished its run() loop; the
+    // isBusy() guard above ensures we never reach here while one is
+    // still running.
     if (scanWorker_) {
-        scanWorker_->wait();
         delete scanWorker_;
+        scanWorker_ = nullptr;
     }
     scanWorker_ = new ScanWorker(&engine_, currentQueryText_,
                                   fname, radius);
@@ -481,7 +524,14 @@ void MainWindow::onScanFile() {
     scanWorker_->start();
 }
 // Function: onLoadQuickDemo
+// Replaces the database wholesale via removeFile() + addFile(), both of
+// which mutate the tree. Must guard against the worker reading it.
 void MainWindow::onLoadQuickDemo() {
+    if (isBusy()) {
+        statusBar()->showMessage(
+            "Wait for current scan to finish before loading the demo.", 3000);
+        return;
+    }
     QStringList dbFiles;
     dbFiles << "database_doc1.txt"
             << "database_doc2.txt"
@@ -540,7 +590,13 @@ void MainWindow::onLoadQuickDemo() {
 }
 
 // Function: onLoadSynonymDemo
+// Same hazard as onLoadQuickDemo: rebuilds the tree.
 void MainWindow::onLoadSynonymDemo() {
+    if (isBusy()) {
+        statusBar()->showMessage(
+            "Wait for current scan to finish before loading the demo.", 3000);
+        return;
+    }
     QString db = findSampleFilePath("database_urban.txt");
     QString query = findSampleFilePath("query_thesaurus.txt");
     QString syn = findSampleFilePath("synonyms.csv");
@@ -658,7 +714,7 @@ void MainWindow::onScanFinished(ScanReport report) {
         ? scores.count()
         : report.matchedFiles.count();
     statusBar()->showMessage(
-        QString("Scan complete — %1 match, %2 source(s) ranked")
+        QString("Scan complete - %1 match, %2 source(s) ranked")
             .arg(pctText)
             .arg(sourceCount),
         10000);
@@ -687,7 +743,7 @@ void MainWindow::onScanFinished(ScanReport report) {
 }
 // Function: onAutoDetectBoilerplate
 void MainWindow::onAutoDetectBoilerplate() {
-    if (scanWorker_ && scanWorker_->isRunning()) {
+    if (isBusy()) {
         statusBar()->showMessage("Wait for current scan to finish before detecting boilerplate.", 3000);
         return;
     }
@@ -716,7 +772,7 @@ void MainWindow::onAutoDetectBoilerplate() {
 }
 // Function: onAddWhitelistWord
 void MainWindow::onAddWhitelistWord() {
-    if (scanWorker_ && scanWorker_->isRunning()) {
+    if (isBusy()) {
         statusBar()->showMessage("Wait for current scan to finish before editing filters.", 3000);
         return;
     }
@@ -740,7 +796,7 @@ void MainWindow::onAddWhitelistWord() {
 }
 // Function: onRemoveWhitelistWord
 void MainWindow::onRemoveWhitelistWord() {
-    if (scanWorker_ && scanWorker_->isRunning()) {
+    if (isBusy()) {
         statusBar()->showMessage("Wait for current scan to finish before editing filters.", 3000);
         return;
     }
@@ -775,9 +831,14 @@ void MainWindow::onStrictnessChanged(int value) {
     }
 }
 // Function: onRescan
+//
+// FIX: same change as onScanFile - we no longer call wait() synchronously
+// on the GUI thread. If a scan is already in flight, this rescan request
+// is dropped (the user can re-trigger after the previous one completes,
+// and onScanFinished's status update will signal completion).
 void MainWindow::onRescan() {
     if (currentQueryText_.empty() || engine_.treeEmpty()) return;
-    if (scanWorker_ && scanWorker_->isRunning()) return;
+    if (isBusy()) return;
     double radius = strictnessSlider_->value() / 100.0;
     lastScanRadius_ = radius;
     std::string fname = currentQueryName_;
@@ -790,8 +851,8 @@ void MainWindow::onRescan() {
     progressBar_->setVisible(true);
     scanBtn_->setEnabled(false);
     if (scanWorker_) {
-        scanWorker_->wait();
         delete scanWorker_;
+        scanWorker_ = nullptr;
     }
     scanWorker_ = new ScanWorker(&engine_, currentQueryText_,
                                   fname, radius);
@@ -800,13 +861,27 @@ void MainWindow::onRescan() {
     scanWorker_->start();
 }
 // Function: applyHeatmap
+//
+// FIX: highlight bookkeeping now uses std::string (UTF-8 byte) indexing
+// throughout, matching the offsets produced by mapPositions() in engine.
+// The previous version used QString::length() (UTF-16 code units) to size
+// the isMatched[] array and then indexed it with byte offsets from the
+// engine - those two unit systems diverge for any non-ASCII text, producing
+// either out-of-range writes or shifted highlights.
+//
+// Because mapPositions() always snaps to ' ' (0x20, single-byte in UTF-8),
+// every (start, end) pair lands on UTF-8 character boundaries, so building
+// each contiguous run with std::string::substr() and converting via
+// QString::fromUtf8() is safe.
+//
+// Also: replaced the raw `new bool[textLen + 1]` with std::vector<bool>
+// so any throw inside the segment loop or the un-mark scan no longer leaks.
 void MainWindow::applyHeatmap(const ScanReport& report) {
     heatmapDisplay_->clear();
-    QString fullText = QString::fromStdString(currentQueryText_);
-    int textLen = fullText.length();
-    bool* isMatched = new bool[textLen + 1];
-    for (int i = 0; i <= textLen; ++i)
-        isMatched[i] = false;
+    const std::string& text = currentQueryText_;
+    int textLen = static_cast<int>(text.size());
+    std::vector<bool> isMatched(textLen, false);
+
     for (int s = 0; s < report.segments.count(); ++s) {
         int start = report.segments[s].start;
         int end   = report.segments[s].end;
@@ -819,12 +894,11 @@ void MainWindow::applyHeatmap(const ScanReport& report) {
     // Un-mark characters belonging to whitelist or boilerplate terms
     // so they are NOT highlighted in the heatmap.
     {
-        std::string origText = currentQueryText_;
         std::string lowerQuery;
-        lowerQuery.reserve(origText.size());
-        for (size_t ci = 0; ci < origText.size(); ++ci) {
+        lowerQuery.reserve(text.size());
+        for (size_t ci = 0; ci < text.size(); ++ci) {
             lowerQuery += static_cast<char>(
-                std::tolower(static_cast<unsigned char>(origText[ci])));
+                std::tolower(static_cast<unsigned char>(text[ci])));
         }
 
         auto unmarkTerms = [&](const RawBuffer<std::string>& terms) {
@@ -865,7 +939,7 @@ void MainWindow::applyHeatmap(const ScanReport& report) {
         unmarkTerms(engine_.whitelist());
         unmarkTerms(engine_.boilerplate());
     }
-    // Build the document with formatting by walking character-by-character,
+    // Build the document with formatting by walking byte-by-byte,
     // batching consecutive same-state characters for efficiency.
     QTextCursor cursor(heatmapDisplay_->document());
     cursor.beginEditBlock();
@@ -881,11 +955,16 @@ void MainWindow::applyHeatmap(const ScanReport& report) {
         bool state = isMatched[i];
         int start = i;
         while (i < textLen && isMatched[i] == state) ++i;
-        QString segment = fullText.mid(start, i - start);
-        cursor.insertText(segment, state ? matchFmt : normalFmt);
+        // substr() gives us a UTF-8 byte slice; fromUtf8() decodes it into
+        // a QString. mapPositions() snaps both endpoints to ' ', so the
+        // slice always begins and ends on a UTF-8 character boundary.
+        std::string segment = text.substr(static_cast<size_t>(start),
+                                          static_cast<size_t>(i - start));
+        cursor.insertText(QString::fromUtf8(segment.data(),
+                                            static_cast<int>(segment.size())),
+                          state ? matchFmt : normalFmt);
     }
     cursor.endEditBlock();
-    delete[] isMatched;
     cursor.movePosition(QTextCursor::Start);
     heatmapDisplay_->setTextCursor(cursor);
 }
