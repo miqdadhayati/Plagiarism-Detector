@@ -817,19 +817,43 @@ void MainWindow::applyHeatmap(const ScanReport& report) {
     }
 
     // Un-mark characters belonging to whitelist or boilerplate terms
-    // so they are NOT highlighted in the heatmap.
+    // so they are NOT highlighted in the heatmap. We search in a
+    // normalized copy of the query (not raw lowercase) because the
+    // original may contain punctuation that normalizeText() strips.
     {
         std::string origText = currentQueryText_;
-        std::string lowerQuery;
-        lowerQuery.reserve(origText.size());
-        for (size_t ci = 0; ci < origText.size(); ++ci) {
-            lowerQuery += static_cast<char>(
-                std::tolower(static_cast<unsigned char>(origText[ci])));
+
+        // Build normalized query and position map (normIdx -> origIdx).
+        std::string normQuery;
+        normQuery.reserve(origText.size());
+        int* normToOrig = new int[origText.size() + 1];
+        int normLen = 0;
+        {
+            bool lastSp = false;
+            for (int ci = 0; ci < textLen; ++ci) {
+                unsigned char uc = static_cast<unsigned char>(origText[ci]);
+                if (std::isalnum(uc)) {
+                    normQuery += static_cast<char>(std::tolower(uc));
+                    normToOrig[normLen++] = ci;
+                    lastSp = false;
+                } else if (std::isspace(uc) ||
+                           origText[ci] == '-' || origText[ci] == '\'') {
+                    if (!lastSp && !normQuery.empty()) {
+                        normQuery += ' ';
+                        normToOrig[normLen++] = ci;
+                        lastSp = true;
+                    }
+                }
+            }
+            if (!normQuery.empty() && normQuery.back() == ' ') {
+                normQuery.pop_back();
+                --normLen;
+            }
         }
 
         auto unmarkTerms = [&](const RawBuffer<std::string>& terms) {
             for (int t = 0; t < terms.count(); ++t) {
-                // Normalize term: lowercase and strip non-alnum.
+                // Normalize term the same way.
                 std::string term;
                 const std::string& raw = terms[t];
                 bool lastSpace = false;
@@ -847,14 +871,16 @@ void MainWindow::applyHeatmap(const ScanReport& report) {
                 if (term.empty()) continue;
 
                 size_t p = 0;
-                while ((p = lowerQuery.find(term, p)) != std::string::npos) {
-                    bool leftOk = (p == 0) ||
-                        !std::isalnum(static_cast<unsigned char>(lowerQuery[p - 1]));
+                while ((p = normQuery.find(term, p)) != std::string::npos) {
+                    bool leftOk  = (p == 0) || (normQuery[p - 1] == ' ');
                     size_t ep = p + term.size();
-                    bool rightOk = (ep >= lowerQuery.size()) ||
-                        !std::isalnum(static_cast<unsigned char>(lowerQuery[ep]));
+                    bool rightOk = (ep >= static_cast<size_t>(normLen)) ||
+                                   (normQuery[ep] == ' ');
                     if (leftOk && rightOk) {
-                        for (size_t c = p; c < ep && c < static_cast<size_t>(textLen); ++c)
+                        int origStart = normToOrig[p];
+                        int origEnd   = (ep < static_cast<size_t>(normLen))
+                                            ? normToOrig[ep] : textLen;
+                        for (int c = origStart; c < origEnd && c < textLen; ++c)
                             isMatched[c] = false;
                     }
                     ++p;
@@ -864,6 +890,7 @@ void MainWindow::applyHeatmap(const ScanReport& report) {
 
         unmarkTerms(engine_.whitelist());
         unmarkTerms(engine_.boilerplate());
+        delete[] normToOrig;
     }
     // Build the document with formatting by walking character-by-character,
     // batching consecutive same-state characters for efficiency.

@@ -615,13 +615,90 @@ ScanReport PlagiarismEngine::scan(const std::string& queryText,
             }
         });
     }
+    // ---- Build exact word-level position mapping (cleaned → original) ----
+    // Step 1: normToOrig — for each char in normalized, its original pos.
+    int textLen = static_cast<int>(queryText.size());
+    int normLen = static_cast<int>(normalized.size());
+    int* normToOrig = new int[normLen + 1];
+    {
+        int ni = 0;
+        bool lastSp = false;
+        bool anyEmitted = false;
+        for (int oi = 0; oi < textLen && ni < normLen; ++oi) {
+            unsigned char uc = static_cast<unsigned char>(queryText[oi]);
+            if (std::isalnum(uc)) {
+                normToOrig[ni++] = oi;
+                lastSp = false;
+                anyEmitted = true;
+            } else if (std::isspace(uc) ||
+                       queryText[oi] == '-' || queryText[oi] == '\'') {
+                if (!lastSp && anyEmitted && ni < normLen &&
+                    normalized[ni] == ' ') {
+                    normToOrig[ni++] = oi;
+                    lastSp = true;
+                }
+            }
+        }
+        normToOrig[normLen] = textLen; // sentinel
+    }
+
+    // Step 2: Split normalized into words, tracking positions.
+    RawBuffer<int> normWordStarts;
+    {
+        int i = 0;
+        while (i < normLen) {
+            if (normalized[i] == ' ') { ++i; continue; }
+            normWordStarts.append(i);
+            while (i < normLen && normalized[i] != ' ') ++i;
+        }
+    }
+
+    // Step 3: Split cleaned into words (pre-synonym), tracking positions.
+    RawBuffer<std::string> cleanWords;
+    {
+        std::string w;
+        for (int i = 0; i <= static_cast<int>(cleaned.size()); ++i) {
+            if (i == static_cast<int>(cleaned.size()) || cleaned[i] == ' ') {
+                if (!w.empty()) { cleanWords.append(w); w.clear(); }
+            } else {
+                w += cleaned[i];
+            }
+        }
+    }
+
+    // Step 4: Match each cleaned word to its normalized word (sequential).
+    // Builds origWordStart[i] and origWordEnd[i] for each word in cleaned.
+    int* origWordStart = new int[cleanWords.count() + 1];
+    int* origWordEnd   = new int[cleanWords.count() + 1];
+    {
+        int ni = 0; // index into normWordStarts
+        for (int ci = 0; ci < cleanWords.count(); ++ci) {
+            // Advance through normalized words to find the matching one.
+            while (ni < normWordStarts.count()) {
+                int ws = normWordStarts[ni];
+                int we = ws;
+                while (we < normLen && normalized[we] != ' ') ++we;
+                std::string nw = normalized.substr(ws, we - ws);
+                if (nw == cleanWords[ci]) {
+                    // Map to original positions via normToOrig.
+                    origWordStart[ci] = normToOrig[ws];
+                    // origWordEnd: find original pos just past this word.
+                    origWordEnd[ci] = (we < normLen)
+                        ? normToOrig[we] : textLen;
+                    ++ni;
+                    break;
+                }
+                ++ni;
+            }
+        }
+    }
+
     int* wordStarts = new int[words.count()];
     int pos = 0;
     for (int i = 0; i < words.count(); ++i) {
         wordStarts[i] = pos;
         pos += static_cast<int>(words[i].size()) + 1;
     }
-    int textLen = static_cast<int>(queryText.size());
     bool* matched = new bool[textLen];
     for (int i = 0; i < textLen; ++i)
         matched[i] = false;
@@ -667,13 +744,12 @@ ScanReport PlagiarismEngine::scan(const std::string& queryText,
                         + " bestDistance=" + std::to_string(results[bestIdx].distance)
                         + " bestSource=\"" + results[bestIdx].ngram.sourceFile + "\"");
             }
-            int cleanStart = wordStarts[i];
+            // Use exact word-level mapping instead of ratio heuristic.
+            int origStart = (i < cleanWords.count())
+                ? origWordStart[i] : 0;
             int lastWordIdx = i + ngramSize_ - 1;
-            int cleanEnd = wordStarts[lastWordIdx]
-                           + static_cast<int>(words[lastWordIdx].size());
-            int origStart = 0, origEnd = textLen;
-            mapPositions(queryText, cleaned, cleanStart, cleanEnd,
-                         origStart, origEnd);
+            int origEnd = (lastWordIdx < cleanWords.count())
+                ? origWordEnd[lastWordIdx] : textLen;
             if (origStart < 0) origStart = 0;
             if (origEnd > textLen) origEnd = textLen;
             for (int c = origStart; c < origEnd; ++c)
@@ -704,34 +780,59 @@ ScanReport PlagiarismEngine::scan(const std::string& queryText,
     }
 
     // Un-mark characters in the original query text that belong to
-    // whitelist or boilerplate terms. Without this, the ratio-based
-    // position mapping inflates matched ranges when filter words are
-    // removed (cleaned text is shorter → ratio is larger → mapped
-    // ranges cover more characters → percentage goes UP instead of DOWN).
+    // whitelist or boilerplate terms. We must search in a *normalized*
+    // copy of the query (not raw lowercase) because the original may
+    // contain punctuation like ':' or '–' that normalizeText() strips.
+    // A position map translates normalized indices back to original indices.
     {
-        // Build a lowercase copy of the original for case-insensitive matching.
-        std::string lowerQuery;
-        lowerQuery.reserve(queryText.size());
-        for (size_t ci = 0; ci < queryText.size(); ++ci) {
-            lowerQuery += static_cast<char>(
-                std::tolower(static_cast<unsigned char>(queryText[ci])));
+        // Build normalized query and position map (normIdx -> origIdx).
+        std::string normQuery;
+        normQuery.reserve(queryText.size());
+        int* umNormToOrig = new int[queryText.size() + 1];
+        int umNormLen = 0;
+        {
+            bool lastSp = false;
+            for (int ci = 0; ci < textLen; ++ci) {
+                unsigned char uc = static_cast<unsigned char>(queryText[ci]);
+                if (std::isalnum(uc)) {
+                    normQuery += static_cast<char>(std::tolower(uc));
+                    umNormToOrig[umNormLen++] = ci;
+                    lastSp = false;
+                } else if (std::isspace(uc) ||
+                           queryText[ci] == '-' || queryText[ci] == '\'') {
+                    if (!lastSp && !normQuery.empty()) {
+                        normQuery += ' ';
+                        umNormToOrig[umNormLen++] = ci;
+                        lastSp = true;
+                    }
+                }
+                // Other characters (colons, dashes, etc.) are skipped,
+                // exactly matching normalizeText() behaviour.
+            }
+            if (!normQuery.empty() && normQuery.back() == ' ') {
+                normQuery.pop_back();
+                --umNormLen;
+            }
         }
 
-        // Lambda: find each term in the original text and un-mark those chars.
+        // Lambda: find each term in the normalized query and un-mark
+        // the corresponding original-text characters.
         auto unmarkTerms = [&](const RawBuffer<std::string>& terms) {
             for (int t = 0; t < terms.count(); ++t) {
                 std::string term = normalizeText(terms[t]);
                 if (term.empty()) continue;
                 size_t p = 0;
-                while ((p = lowerQuery.find(term, p)) != std::string::npos) {
-                    // Word boundary checks.
-                    bool leftOk = (p == 0) ||
-                        !std::isalnum(static_cast<unsigned char>(lowerQuery[p - 1]));
+                while ((p = normQuery.find(term, p)) != std::string::npos) {
+                    // Word boundary checks in normalized space.
+                    bool leftOk  = (p == 0) || (normQuery[p - 1] == ' ');
                     size_t ep = p + term.size();
-                    bool rightOk = (ep >= lowerQuery.size()) ||
-                        !std::isalnum(static_cast<unsigned char>(lowerQuery[ep]));
+                    bool rightOk = (ep >= static_cast<size_t>(umNormLen)) ||
+                                   (normQuery[ep] == ' ');
                     if (leftOk && rightOk) {
-                        for (size_t c = p; c < ep && c < static_cast<size_t>(textLen); ++c)
+                        int origStart = umNormToOrig[p];
+                        int origEnd   = (ep < static_cast<size_t>(umNormLen))
+                                            ? umNormToOrig[ep] : textLen;
+                        for (int c = origStart; c < origEnd && c < textLen; ++c)
                             matched[c] = false;
                     }
                     ++p;
@@ -741,6 +842,7 @@ ScanReport PlagiarismEngine::scan(const std::string& queryText,
 
         unmarkTerms(whitelist_);
         unmarkTerms(boilerplate_);
+        delete[] umNormToOrig;
     }
 
     int matchedChars = 0;
@@ -760,6 +862,9 @@ ScanReport PlagiarismEngine::scan(const std::string& queryText,
     }
     delete[] wordStarts;
     delete[] matched;
+    delete[] normToOrig;
+    delete[] origWordStart;
+    delete[] origWordEnd;
     return report;
 }
 
