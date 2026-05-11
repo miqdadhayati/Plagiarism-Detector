@@ -13,6 +13,9 @@ void VPTree::emitTrace(const std::string& message) const {
 }
 
 // Function: distance_metric
+// Levenshtein edit distance via the two-row DP (O(min(m,n)) auxiliary
+// memory). Returns a non-negative real number; satisfies the metric axioms
+// required by the VP-tree (identity, symmetry, triangle inequality).
 double VPTree::distance_metric(const NGram& a, const NGram& b) {
     const std::string& s = a.text;
     const std::string& t = b.text;
@@ -46,8 +49,15 @@ double VPTree::distance_metric(const NGram& a, const NGram& b) {
 }
 
 // Function: quickSelect
+// Returns the k-th smallest value of arr (0-indexed). Hoare-style three-way
+// partition that handles duplicates correctly. Caller must guarantee n >= 1
+// and 0 <= k < n; we still guard n <= 0 to avoid an out-of-bounds read on
+// a hypothetical empty array.
 double VPTree::quickSelect(double* arr, int n, int k) {
-    if (n <= 1) return arr[0];
+    if (n <= 0) return 0.0;
+    if (n == 1) return arr[0];
+    if (k < 0)   k = 0;
+    if (k >= n)  k = n - 1;
     int left = 0, right = n - 1;
     while (left < right) {
         double pivot = arr[left + (right - left) / 2];
@@ -63,15 +73,16 @@ double VPTree::quickSelect(double* arr, int n, int k) {
             }
         }
         if (k <= j)      right = j;
-        else if (k >= i)  left  = i;
-        else              break;
+        else if (k >= i) left  = i;
+        else             break;
     }
     return arr[k];
 }
 
 // Function: select_vantage_point
 NGram VPTree::select_vantage_point(NGram* items, int count) {
-    if (count <= 1) return items[0];
+    if (count <= 0) return NGram();
+    if (count == 1) return items[0];
     int numCandidates = (count < 5) ? count : 5;
     int sampleSize    = (count < 20) ? count : 20;
     int bestIdx = 0;
@@ -105,7 +116,7 @@ NGram VPTree::select_vantage_point(NGram* items, int count) {
 // Function: calculate_median_distance
 double VPTree::calculate_median_distance(const NGram& vp,
                                           NGram* items, int count) {
-    if (count == 0) return 0.0;
+    if (count <= 0) return 0.0;
     double* dists = new double[count];
     for (int i = 0; i < count; ++i)
         dists[i] = distance_metric(vp, items[i]);
@@ -116,6 +127,15 @@ double VPTree::calculate_median_distance(const NGram& vp,
 }
 
 // Function: buildRecursive
+// Builds a VP subtree from `count` items in `items`. The crucial property
+// is that we avoid the linked-list degeneration that occurs when many
+// items share the median distance: we route alternating tied items to the
+// right child instead of letting them all collapse into the left.
+//
+// Pruning correctness under tie-balancing: the right subtree no longer
+// strictly contains items with d > mu (some items with d == mu also live
+// there), so range/knn searches use `>=` rather than `>` on the right
+// side. See rangeQueryRecursive() and knnRecursive().
 VPTreeNode* VPTree::buildRecursive(NGram* items, int count) {
     emitTrace("buildRecursive(count=" + std::to_string(count) + ")");
     if (count == 0) return nullptr;
@@ -147,16 +167,27 @@ VPTreeNode* VPTree::buildRecursive(NGram* items, int count) {
     double median = calculate_median_distance(node->vantagePoint, rest, restSize);
     node->medianDistance = median;
     emitTrace("  median distance: " + std::to_string(median));
-    // 3. Partition rest into inside (<= median) and outside (> median)
+    // 3. Partition rest. Items with d < median go strictly inside; items
+    //    with d > median go strictly outside; items with d == median are
+    //    alternated between the two halves so that long runs of duplicates
+    //    don't collapse the tree into a single chain.
     NGram* inside  = new NGram[restSize];
     NGram* outside = new NGram[restSize];
     int    inCount = 0, outCount = 0;
+    int    tieToggle = 0;
     for (int i = 0; i < restSize; ++i) {
         double d = distance_metric(node->vantagePoint, rest[i]);
-        if (d <= median)
-            inside[inCount++]   = rest[i];
-        else
+        if (d < median) {
+            inside[inCount++] = rest[i];
+        } else if (d > median) {
             outside[outCount++] = rest[i];
+        } else {
+            // d == median: alternate to prevent linked-list degeneration.
+            if ((tieToggle++ & 1) == 0)
+                inside[inCount++] = rest[i];
+            else
+                outside[outCount++] = rest[i];
+        }
     }
     emitTrace("  partition inside=" + std::to_string(inCount)
             + " outside=" + std::to_string(outCount));
@@ -178,6 +209,20 @@ void VPTree::build_tree(NGram* items, int count) {
 }
 
 // Function: rangeQueryRecursive
+// Range query with triangle-inequality pruning. Note the asymmetric bounds:
+//
+//   Left subtree:  d(vp, item) <= mu  (strict <= invariant)
+//   Right subtree: d(vp, item) >= mu  (relaxed >= invariant — see
+//                                       buildRecursive tie-balancing)
+//
+// For an item to possibly satisfy d(query, item) <= radius, triangle
+// inequality gives:
+//
+//   |d(query, vp) - d(vp, item)| <= d(query, item) <= radius
+//
+// which is rearranged into the two pruning predicates below. The right
+// child predicate uses `>=` (not `>`) because items with d == mu may live
+// on either side under tie-balancing; using `>` would silently drop them.
 void VPTree::rangeQueryRecursive(VPTreeNode* node,
                                   const NGram& query,
                                   double radius,
@@ -198,14 +243,11 @@ void VPTree::rangeQueryRecursive(VPTreeNode* node,
         }
     }
     double mu = node->medianDistance;
-    // Pruning: only visit children that could contain results
-    // Left child (inside): items with dist(vp, item) <= mu
-    //   Can contain results if dist - radius <= mu
+    // Left: items with d(vp, item) <= mu.
     if (dist - radius <= mu)
         rangeQueryRecursive(node->left, query, radius, results);
-    // Right child (outside): items with dist(vp, item) > mu
-    //   Can contain results if dist + radius > mu
-    if (dist + radius > mu)
+    // Right: items with d(vp, item) >= mu (tie items may live here).
+    if (dist + radius >= mu)
         rangeQueryRecursive(node->right, query, radius, results);
 }
 
@@ -226,6 +268,7 @@ void VPTree::knnInsert(RawBuffer<SearchResult>& results,
                         int k,
                         double& tau) const {
     emitTrace("knn insert candidate dist=" + std::to_string(sr.distance));
+    if (k <= 0) return;
     // Find insertion point — keep buffer sorted by descending distance
     results.append(sr);
     if (results.count() > k) {
@@ -248,6 +291,8 @@ void VPTree::knnInsert(RawBuffer<SearchResult>& results,
 }
 
 // Function: knnRecursive
+// Same pruning rationale as rangeQueryRecursive(); right child uses `>=`
+// because of the tie-balanced partition in buildRecursive.
 void VPTree::knnRecursive(VPTreeNode* node,
                            const NGram& query,
                            int k,
@@ -271,11 +316,11 @@ void VPTree::knnRecursive(VPTreeNode* node,
         // Query is inside; search left first
         if (dist - tau <= mu)
             knnRecursive(node->left, query, k, results, tau);
-        if (dist + tau > mu)
+        if (dist + tau >= mu)
             knnRecursive(node->right, query, k, results, tau);
     } else {
         // Query is outside; search right first
-        if (dist + tau > mu)
+        if (dist + tau >= mu)
             knnRecursive(node->right, query, k, results, tau);
         if (dist - tau <= mu)
             knnRecursive(node->left, query, k, results, tau);
@@ -287,6 +332,7 @@ RawBuffer<SearchResult> VPTree::search_knn(const NGram& query, int k) const {
     emitTrace("search_knn(start query=\"" + query.text + "\" k="
             + std::to_string(k) + ")");
     RawBuffer<SearchResult> results;
+    if (k <= 0) return results;
     double tau = 1e18;
     knnRecursive(root_, query, k, results, tau);
     emitTrace("search_knn(done neighbors=" + std::to_string(results.count()) + ")");
