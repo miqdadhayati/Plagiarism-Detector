@@ -85,11 +85,7 @@ private:
     mutable std::function<void(const std::string&)> traceCallback_;
     mutable bool            traceDataStructure_;
 
-    // Thesaurus Catcher: synonym -> root-token table.
-    // Lookup is O(1) average via std::unordered_map; total space is O(V),
-    // where V is the loaded vocabulary. Keys are stored lower-cased so that
-    // applySynonyms() can hash incoming tokens directly without copying the
-    // dictionary at query time.
+    // Synonym dictionary map (synonym -> root). Time: O(1) lookup.
     std::unordered_map<std::string, std::string> synonymMap_;
 
     void emitTrace(const std::string& message) const;
@@ -108,17 +104,10 @@ private:
         const std::string& text,
         const RawBuffer<std::string>& terms) const;
 
-    // Split text into words. Each token is normalized through applySynonyms()
-    // before it is appended, so semantically-equivalent surface forms collapse
-    // to a shared root token before n-gram construction. This is a non-static
-    // const member because it must read synonymMap_.
+    // Tokenizes text and applies synonyms. Time: O(n).
     RawBuffer<std::string> tokenize(const std::string& text) const;
 
-    // Synonym normalization function T : W -> R.
-    // Returns the root token associated with `word` if w in W; otherwise
-    // returns `word` unchanged (the identity branch of T). Lookup is O(1)
-    // average. The input is lower-cased internally before hashing so the
-    // function is case-insensitive at the boundary.
+    // Applies synonyms to a word. Time: O(1).
     std::string applySynonyms(const std::string& word) const;
 
     // Build n-grams with position mapping.
@@ -146,23 +135,13 @@ public:
     void clearWhitelist();
     const RawBuffer<std::string>& whitelist() const { return whitelist_; }
 
-    // Boilerplate: auto-detected from document commonalities.
-    // Scans all indexed files and finds n-grams that appear in >= threshold
-    // fraction of documents. Those common phrases are treated as boilerplate.
-    // Returns the number of boilerplate phrases detected.
+    // Auto-detects boilerplate phrases. Time: O(D * W) where D is docs, W is words.
     int detectBoilerplate();
     const RawBuffer<std::string>& boilerplate() const { return boilerplate_; }
     void setBoilerplateThreshold(double t);
     double boilerplateThreshold() const { return boilerplateThreshold_; }
 
-    // Load a synonym dictionary from disk. Each line of the file is a CSV
-    // record formatted as:
-    //     root_token,synonym1,synonym2,synonym3,...
-    // Blank lines and lines beginning with '#' are ignored. Synonym keys are
-    // folded to lower case before insertion. The first column is preserved
-    // verbatim as the value, so callers may use canonical sentinels such as
-    // "SPEED_ADJ" without case mangling. Returns true if the file was opened
-    // and parsed successfully; false on I/O failure.
+    // Loads synonym dictionary from CSV. Time: O(L) where L is file length.
     bool loadSynonymDictionary(const std::string& filePath);
 
     // Synonym dictionary stats.

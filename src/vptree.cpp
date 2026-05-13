@@ -1,4 +1,4 @@
-#include "vptree.h"
+re#include "vptree.h"
 #include <cmath>
 #include <cstdlib>
 #include <algorithm>
@@ -13,9 +13,8 @@ void VPTree::emitTrace(const std::string& message) const {
 }
 
 // Function: distance_metric
-// Levenshtein edit distance via the two-row DP (O(min(m,n)) auxiliary
-// memory). Returns a non-negative real number; satisfies the metric axioms
-// required by the VP-tree (identity, symmetry, triangle inequality).
+// Calculates Levenshtein distance using 2-row DP.
+// Time Complexity: O(m * n), Space Complexity: O(n).
 double VPTree::distance_metric(const NGram& a, const NGram& b) {
     const std::string& s = a.text;
     const std::string& t = b.text;
@@ -49,10 +48,8 @@ double VPTree::distance_metric(const NGram& a, const NGram& b) {
 }
 
 // Function: quickSelect
-// Returns the k-th smallest value of arr (0-indexed). Hoare-style three-way
-// partition that handles duplicates correctly. Caller must guarantee n >= 1
-// and 0 <= k < n; we still guard n <= 0 to avoid an out-of-bounds read on
-// a hypothetical empty array.
+// Returns k-th smallest value using Hoare partition.
+// Time Complexity: O(n) average, O(n^2) worst-case.
 double VPTree::quickSelect(double* arr, int n, int k) {
     if (n <= 0) return 0.0;
     if (n == 1) return arr[0];
@@ -80,6 +77,8 @@ double VPTree::quickSelect(double* arr, int n, int k) {
 }
 
 // Function: select_vantage_point
+// Selects a vantage point by finding the one with maximum variance among samples.
+// Time Complexity: O(1) (bounded sample size).
 NGram VPTree::select_vantage_point(NGram* items, int count) {
     if (count <= 0) return NGram();
     if (count == 1) return items[0];
@@ -114,6 +113,8 @@ NGram VPTree::select_vantage_point(NGram* items, int count) {
 }
 
 // Function: calculate_median_distance
+// Calculates median distance from the vantage point to all items.
+// Time Complexity: O(n) average.
 double VPTree::calculate_median_distance(const NGram& vp,
                                           NGram* items, int count) {
     if (count <= 0) return 0.0;
@@ -127,15 +128,8 @@ double VPTree::calculate_median_distance(const NGram& vp,
 }
 
 // Function: buildRecursive
-// Builds a VP subtree from `count` items in `items`. The crucial property
-// is that we avoid the linked-list degeneration that occurs when many
-// items share the median distance: we route alternating tied items to the
-// right child instead of letting them all collapse into the left.
-//
-// Pruning correctness under tie-balancing: the right subtree no longer
-// strictly contains items with d > mu (some items with d == mu also live
-// there), so range/knn searches use `>=` rather than `>` on the right
-// side. See rangeQueryRecursive() and knnRecursive().
+// Builds VP subtree recursively with tie-balancing for identical distances.
+// Time Complexity: O(n log n) average, O(n^2) worst-case.
 VPTreeNode* VPTree::buildRecursive(NGram* items, int count) {
     emitTrace("buildRecursive(count=" + std::to_string(count) + ")");
     if (count == 0) return nullptr;
@@ -200,6 +194,8 @@ VPTreeNode* VPTree::buildRecursive(NGram* items, int count) {
 }
 
 // Function: build_tree
+// Clears and builds a new VP tree from items.
+// Time Complexity: O(n log n) average.
 void VPTree::build_tree(NGram* items, int count) {
     emitTrace("build_tree(start count=" + std::to_string(count) + ")");
     clear();
@@ -209,20 +205,8 @@ void VPTree::build_tree(NGram* items, int count) {
 }
 
 // Function: rangeQueryRecursive
-// Range query with triangle-inequality pruning. Note the asymmetric bounds:
-//
-//   Left subtree:  d(vp, item) <= mu  (strict <= invariant)
-//   Right subtree: d(vp, item) >= mu  (relaxed >= invariant — see
-//                                       buildRecursive tie-balancing)
-//
-// For an item to possibly satisfy d(query, item) <= radius, triangle
-// inequality gives:
-//
-//   |d(query, vp) - d(vp, item)| <= d(query, item) <= radius
-//
-// which is rearranged into the two pruning predicates below. The right
-// child predicate uses `>=` (not `>`) because items with d == mu may live
-// on either side under tie-balancing; using `>` would silently drop them.
+// Recursively searches for items within radius using triangle inequality pruning.
+// Time Complexity: O(log n) average, O(n) worst-case.
 void VPTree::rangeQueryRecursive(VPTreeNode* node,
                                   const NGram& query,
                                   double radius,
@@ -252,6 +236,8 @@ void VPTree::rangeQueryRecursive(VPTreeNode* node,
 }
 
 // Function: range_query
+// Public entry point for range query search.
+// Time Complexity: O(log n) average, O(n) worst-case.
 RawBuffer<SearchResult> VPTree::range_query(const NGram& query,
                                              double radius) const {
     emitTrace("range_query(start query=\"" + query.text + "\" radius="
@@ -263,6 +249,8 @@ RawBuffer<SearchResult> VPTree::range_query(const NGram& query,
 }
 
 // Function: knnInsert
+// Inserts search result into a bounded priority queue.
+// Time Complexity: O(k) worst-case.
 void VPTree::knnInsert(RawBuffer<SearchResult>& results,
                         const SearchResult& sr,
                         int k,
@@ -291,8 +279,8 @@ void VPTree::knnInsert(RawBuffer<SearchResult>& results,
 }
 
 // Function: knnRecursive
-// Same pruning rationale as rangeQueryRecursive(); right child uses `>=`
-// because of the tie-balanced partition in buildRecursive.
+// Recursively searches for k-nearest neighbors using triangle inequality pruning.
+// Time Complexity: O(log n) average, O(n) worst-case.
 void VPTree::knnRecursive(VPTreeNode* node,
                            const NGram& query,
                            int k,
@@ -328,6 +316,8 @@ void VPTree::knnRecursive(VPTreeNode* node,
 }
 
 // Function: search_knn
+// Public entry point for k-nearest neighbor search.
+// Time Complexity: O(log n) average, O(n) worst-case.
 RawBuffer<SearchResult> VPTree::search_knn(const NGram& query, int k) const {
     emitTrace("search_knn(start query=\"" + query.text + "\" k="
             + std::to_string(k) + ")");
@@ -340,6 +330,8 @@ RawBuffer<SearchResult> VPTree::search_knn(const NGram& query, int k) const {
 }
 
 // Function: insert
+// Inserts a single item into the tree by collecting all items and rebuilding.
+// Time Complexity: O(n log n) average.
 void VPTree::insert(const NGram& item) {
     emitTrace("insert(start item=\"" + item.text + "\")");
     RawBuffer<NGram> all;
@@ -351,6 +343,8 @@ void VPTree::insert(const NGram& item) {
 }
 
 // Function: contains
+// Checks if exact item exists in the tree.
+// Time Complexity: O(n).
 bool VPTree::contains(const NGram& item) const {
     emitTrace("contains(check item=\"" + item.text + "\")");
     RawBuffer<NGram> all;
@@ -366,6 +360,8 @@ bool VPTree::contains(const NGram& item) const {
 }
 
 // Function: remove
+// Removes one exact item from the tree by rebuilding it.
+// Time Complexity: O(n log n) average.
 bool VPTree::remove(const NGram& item) {
     emitTrace("remove(start item=\"" + item.text + "\")");
     if (!root_) return false;
@@ -391,6 +387,8 @@ bool VPTree::remove(const NGram& item) {
 }
 
 // Function: update
+// Replaces one item with another and rebuilds the tree.
+// Time Complexity: O(n log n) average.
 bool VPTree::update(const NGram& oldItem, const NGram& newItem) {
     emitTrace("update(start old=\"" + oldItem.text + "\" new=\""
             + newItem.text + "\")");
@@ -416,12 +414,16 @@ bool VPTree::update(const NGram& oldItem, const NGram& newItem) {
 }
 
 // Function: is_leaf
+// Checks if the given node is a leaf node.
+// Time Complexity: O(1).
 bool VPTree::is_leaf(const VPTreeNode* node) {
     if (!node) return false;
     return node->left == nullptr && node->right == nullptr;
 }
 
 // Function: get_height
+// Computes the maximum depth of the tree.
+// Time Complexity: O(n).
 int VPTree::get_height(const VPTreeNode* node) {
     if (!node) return 0;
     int lh = get_height(node->left);
@@ -430,6 +432,8 @@ int VPTree::get_height(const VPTreeNode* node) {
 }
 
 // Function: collectAll
+// Collects all items in the subtree rooted at the given node.
+// Time Complexity: O(n).
 void VPTree::collectAll(VPTreeNode* node, RawBuffer<NGram>& out) const {
     if (!node) return;
     out.append(node->vantagePoint);
@@ -438,6 +442,8 @@ void VPTree::collectAll(VPTreeNode* node, RawBuffer<NGram>& out) const {
 }
 
 // Function: destroyRecursive
+// Recursively deletes nodes to free memory.
+// Time Complexity: O(n).
 void VPTree::destroyRecursive(VPTreeNode* node) {
     if (!node) return;
     destroyRecursive(node->left);
@@ -446,6 +452,8 @@ void VPTree::destroyRecursive(VPTreeNode* node) {
 }
 
 // Function: clear
+// Clears all nodes from the tree.
+// Time Complexity: O(n).
 void VPTree::clear() {
     emitTrace("clear(start)");
     destroyRecursive(root_);
@@ -455,6 +463,8 @@ void VPTree::clear() {
 }
 
 // Function: rebuild
+// Rebuilds the tree from current data.
+// Time Complexity: O(n log n) average.
 void VPTree::rebuild() {
     emitTrace("rebuild(start)");
     RawBuffer<NGram> all;

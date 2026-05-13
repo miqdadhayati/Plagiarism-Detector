@@ -70,10 +70,7 @@ private:
     void updateTreeStats();
     void applyHeatmap(const ScanReport& report);
 
-    // True while a background scan is still in flight. Every slot that
-    // mutates engine_ must early-return when this returns true; otherwise
-    // the GUI thread can free or rebuild the VP-Tree underneath the
-    // worker's still-running scan(), producing a use-after-free.
+    // Checks if background scan is in progress. Time: O(1).
     bool isBusy() const {
         return scanWorker_ != nullptr && scanWorker_->isRunning();
     }

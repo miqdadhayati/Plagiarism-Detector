@@ -4,7 +4,7 @@
 #include <cstring>
 #include <utility>
 
-// Simple dynamic buffer using raw pointers.
+// RawBuffer<T> — A manual-memory dynamic buffer.
 template <typename T>
 class RawBuffer {
 private:

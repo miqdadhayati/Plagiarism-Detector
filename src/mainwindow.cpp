@@ -89,10 +89,7 @@ MainWindow::MainWindow(QWidget* parent)
     setupUI();
     setupConnections();
 
-    // Thesaurus Catcher: load synonym dictionary once at startup.
-    // findSampleFilePath() searches both the working directory and the
-    // application directory, so this resolves correctly regardless of
-    // how the .exe is launched.
+    // Load synonym dictionary.
     QString synPath = findSampleFilePath("synonyms.csv");
     bool synonymsLoaded = false;
     if (!synPath.isEmpty()) {

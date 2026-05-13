@@ -5,9 +5,7 @@
 #include <utility>
 
 // ============================================================================
-// RawBuffer<T> — A manual-memory dynamic buffer using new[]/delete[].
-// This is NOT a standard container. It satisfies the constraint of using
-// "raw pointers and manual memory management" for all internal storage.
+// RawBuffer<T> — A manual-memory dynamic buffer.
 // ============================================================================
 template <typename T>
 class RawBuffer {

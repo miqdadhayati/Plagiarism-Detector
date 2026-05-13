@@ -85,36 +85,32 @@ public:
 
     // ---- Required public interface ----
 
-    /// Select a vantage point from an array of NGrams.
-    /// Strategy: pick the item that maximizes spread (variance of distances).
-    /// For efficiency, samples a subset and picks the best candidate.
+    /// Select a vantage point maximizing variance. Time: O(1).
     static NGram select_vantage_point(NGram* items, int count);
 
-    /// Calculate the median distance from the vantage point to all items.
+    /// Calculate median distance from VP. Time: O(n).
     static double calculate_median_distance(const NGram& vp,
                                             NGram* items, int count);
 
-    /// Build the tree from an array of NGrams.
-    /// The array is consumed (reordered) during construction.
+    /// Build tree from array. Time: O(n log n) average.
     void build_tree(NGram* items, int count);
 
-    /// Metric space distance: normalized Levenshtein edit distance.
-    /// Returns a value in [0.0, 1.0] where 0.0 = identical.
+    /// Levenshtein distance. Time: O(m*n).
     static double distance_metric(const NGram& a, const NGram& b);
 
-    /// K-nearest-neighbor search. Returns up to k closest items.
+    /// K-nearest-neighbor search. Time: O(log n) average.
     RawBuffer<SearchResult> search_knn(const NGram& query, int k) const;
 
-    /// Range query: returns all items within `radius` distance of query.
+    /// Range query search. Time: O(log n) average.
     RawBuffer<SearchResult> range_query(const NGram& query, double radius) const;
 
-    /// Insert a single NGram into the existing tree.
+    /// Insert an item. Time: O(n log n) average.
     void insert(const NGram& item);
 
-    /// Check if a node is a leaf (no children).
+    /// Check if leaf. Time: O(1).
     static bool is_leaf(const VPTreeNode* node);
 
-    /// Get the height of the tree (or subtree).
+    /// Get tree height. Time: O(n).
     static int get_height(const VPTreeNode* node);
 
     /// Accessors
@@ -125,7 +121,7 @@ public:
     /// Clear all nodes
     void clear();
 
-    /// Rebuild tree from existing data (useful after many inserts)
+    /// Rebuild tree. Time: O(n log n) average.
     void rebuild();
 };
 

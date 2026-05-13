@@ -93,12 +93,8 @@ std::string PlagiarismEngine::removeTermsStrict(
 }
 
 // Function: tokenize
-// The Thesaurus Catcher interception point. Each whitespace-delimited token
-// is passed through applySynonyms() the moment it is extracted, so the n-gram
-// buffer downstream sees only root tokens. By collapsing synonyms before the
-// VP-Tree ever computes a Levenshtein distance, we guarantee
-//     D_lev(T(A), T(B)) <= D_lev(A, B)
-// for any pair of n-grams A, B that are semantically identical under T.
+// Tokenizes text and maps synonyms to their root forms.
+// Time Complexity: O(n) where n is text length.
 RawBuffer<std::string> PlagiarismEngine::tokenize(const std::string& text) const {
     RawBuffer<std::string> words;
     std::string word;
@@ -120,9 +116,8 @@ RawBuffer<std::string> PlagiarismEngine::tokenize(const std::string& text) const
 }
 
 // Function: applySynonyms
-// Implements T : W -> R. Hash lookup is O(1) on average, O(V) space, where V
-// is the size of the loaded vocabulary. The function never mutates the
-// caller's string and is safe to call from const contexts.
+// Maps a word to its root synonym if found.
+// Time Complexity: O(1) average lookup.
 std::string PlagiarismEngine::applySynonyms(const std::string& word) const {
     // Fast path: no dictionary loaded, identity mapping.
     if (synonymMap_.empty()) return word;
@@ -149,12 +144,8 @@ std::string PlagiarismEngine::applySynonyms(const std::string& word) const {
 }
 
 // Function: loadSynonymDictionary
-// Parses a CSV-style thesaurus file. Each non-comment, non-blank line is
-//     root_token,synonym1,synonym2,...
-// and produces N entries in the hash map (one per synonym) all pointing to
-// the root token string. Duplicate synonyms across lines follow last-write-
-// wins semantics, which lets a caller override a mapping by re-declaring it
-// later in the file.
+// Loads CSV synonym mappings into a hash map.
+// Time Complexity: O(L) where L is the number of lines.
 bool PlagiarismEngine::loadSynonymDictionary(const std::string& filePath) {
     std::ifstream ifs(filePath);
     if (!ifs.is_open()) {
@@ -343,10 +334,8 @@ void PlagiarismEngine::setBoilerplateThreshold(double t) {
 }
 
 // Function: detectBoilerplate
-// Scans all indexed files and auto-detects phrases (n-grams) that appear in
-// >= boilerplateThreshold_ fraction of documents. These common phrases are
-// typically organizational headers, question formats, etc. that should not
-// be flagged as plagiarism.
+// Auto-detects frequently occurring boilerplate phrases across indexed files.
+// Time Complexity: O(D * W) where D is docs, W is words.
 int PlagiarismEngine::detectBoilerplate() {
     boilerplate_.clear();
 
@@ -433,8 +422,8 @@ int PlagiarismEngine::detectBoilerplate() {
 }
 
 // Function: getSynonymDictionary
-// Inverts the synonymMap_ (synonym->root) into a grouped view (root->[synonyms])
-// for display purposes.
+// Returns synonym dictionary grouped by root tokens.
+// Time Complexity: O(V log V) where V is vocabulary size (due to sorting).
 std::vector<SynonymDictEntry> PlagiarismEngine::getSynonymDictionary() const {
     // Build root -> synonyms grouping.
     std::map<std::string, std::vector<std::string>> grouped;
@@ -454,8 +443,8 @@ std::vector<SynonymDictEntry> PlagiarismEngine::getSynonymDictionary() const {
 }
 
 // Function: getSynonymMappingReport
-// Tokenizes the input text and reports every word that has a synonym mapping,
-// showing original_word -> root_token.
+// Reports all synonym substitutions in the text.
+// Time Complexity: O(n) where n is text length.
 std::vector<SynonymMapping> PlagiarismEngine::getSynonymMappingReport(
     const std::string& text) const
 {
